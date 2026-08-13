@@ -5,6 +5,8 @@ import { app, shell, BrowserWindow } from 'electron';
 import { join } from 'path';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import icon from '../../resources/icon.png?asset';
+import { ensureDataDir, FileConfigStore } from './hub/config';
+import { registerHubIpc } from './hub/ipc';
 
 /**
  * 创建应用主窗口。
@@ -50,10 +52,13 @@ function createWindow(): void {
 
 // 此方法在 Electron 完成初始化、可以创建浏览器窗口时被调用。
 // 部分 API 只能在该事件触发后使用,提前调用会抛异常。
-// 用 void 忽略 Promise:回调内部无需要 await 的流程,失败也无需处理
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   // 设置 Windows 的 App User Model ID,否则任务栏分组/通知归属异常
   electronApp.setAppUserModelId('com.electron');
+
+  // 确保 ~/.lvdagun 数据目录存在(幂等),再注册 Hub 的 IPC 通道(配置读写/模型列表/测试连接)
+  await ensureDataDir();
+  registerHubIpc(new FileConfigStore());
 
   // 开发环境默认按 F12 开关 DevTools,生产环境忽略 CommandOrControl + R。
   // 参见 https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
