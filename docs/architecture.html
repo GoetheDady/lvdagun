@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>驴打滚架构理解 — Agent Hub 中心辐射式</title>
+    <style>
+      :root {
+        --brand: #0f6e56;
+        --brand-light: #e6f2ee;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --bg: #fafafa;
+        --card: #ffffff;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.7;
+        padding: 40px 24px 80px;
+      }
+      .wrap {
+        max-width: 880px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 6px;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 44px 0 14px;
+        padding-left: 10px;
+        border-left: 4px solid var(--brand);
+      }
+      .sub {
+        color: var(--muted);
+        margin-bottom: 32px;
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 20px;
+      }
+      .note {
+        font-size: 14px;
+        color: var(--muted);
+        margin-top: 12px;
+      }
+
+      /* 示意图 */
+      .diagram {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 8px 0;
+      }
+      .box {
+        border-radius: 10px;
+        padding: 14px 18px;
+        min-width: 180px;
+        text-align: center;
+      }
+      .box .title {
+        font-weight: 600;
+        font-size: 15px;
+      }
+      .box .desc {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .hub {
+        background: var(--brand);
+        color: #fff;
+      }
+      .hub .desc {
+        color: rgba(255, 255, 255, 0.85);
+      }
+      .client {
+        background: #fff;
+        border: 2px solid var(--brand);
+      }
+      .future {
+        background: #fff;
+        border: 2px dashed var(--brand);
+      }
+      .arrow {
+        font-size: 20px;
+        color: var(--brand);
+      }
+      .arrow.v {
+        font-size: 20px;
+        color: var(--brand);
+        text-align: center;
+        line-height: 1.2;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+      }
+      .stack-row {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      /* 单应用进程图 */
+      .process {
+        border: 2px solid var(--ink);
+        border-radius: 14px;
+        padding: 18px;
+        position: relative;
+        background: #fff;
+      }
+      .process-label {
+        position: absolute;
+        top: -12px;
+        left: 16px;
+        background: #fff;
+        padding: 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .lane {
+        border-radius: 10px;
+        padding: 14px;
+        margin-top: 10px;
+      }
+      .lane.hub-lane {
+        background: var(--brand-light);
+        border: 1px solid var(--brand);
+      }
+      .lane.ui-lane {
+        background: #f3f4f6;
+        border: 1px solid var(--line);
+      }
+      .lane .lane-title {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+      .lane ul {
+        padding-left: 18px;
+        font-size: 13.5px;
+        color: #374151;
+      }
+      .ipc {
+        text-align: center;
+        font-size: 13px;
+        color: var(--brand);
+        font-weight: 600;
+        margin: 8px 0;
+      }
+
+      /* 关键含义 */
+      ol.insights {
+        padding-left: 20px;
+      }
+      ol.insights li {
+        margin-bottom: 12px;
+      }
+      ol.insights b {
+        color: var(--brand);
+      }
+
+      /* 演进时间线 */
+      .timeline {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .stage {
+        flex: 1;
+        min-width: 200px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px;
+        background: #fff;
+      }
+      .stage .ver {
+        display: inline-block;
+        background: var(--brand);
+        color: #fff;
+        border-radius: 6px;
+        padding: 1px 10px;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .stage .ver.ghost {
+        background: #d1d5db;
+      }
+      .stage ul {
+        padding-left: 16px;
+        font-size: 13.5px;
+        color: #374151;
+      }
+      .stage.now {
+        border-color: var(--brand);
+      }
+      .stage.now .ver {
+        background: var(--brand);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>驴打滚架构理解</h1>
+      <p class="sub">
+        中心辐射式:Agent Hub(内核)+ 多端客户端。对 PRD 第 3 节的理解,非官方设计文档。
+      </p>
+
+      <h2>1. 一句话</h2>
+      <section>
+        <p>
+          一个<b>常驻本机的 Agent 内核</b
+          >负责"思考"(模型对话、工具、上下文),多个<b>无状态客户端</b>负责"展示"。客户端随时可关、可重开、可增加;内核一直在,谁来了都给同一份上下文。
+        </p>
+        <div class="diagram">
+          <div class="box client">
+            <div class="title">🖥 桌面壳</div>
+            <div class="desc">V0 客户端 · Electron</div>
+          </div>
+          <span class="arrow">⇄</span>
+          <div class="box hub">
+            <div class="title">🧠 Agent Hub</div>
+            <div class="desc">模型对话 · 工具执行<br />上下文 · 会话状态</div>
+          </div>
+          <span class="arrow">⇄</span>
+          <div class="box future">
+            <div class="title">📱 手机 PWA</div>
+            <div class="desc">V2 客户端 · 局域网</div>
+          </div>
+        </div>
+      </section>
+
+      <h2>2. V0 的物理形态:内核寄居在 Electron 主进程</h2>
+      <section>
+        <div class="process">
+          <div class="process-label">单一安装包 · 单一进程树</div>
+          <div class="lane ui-lane">
+            <div class="lane-title">渲染进程 = 客户端(无状态)</div>
+            <ul>
+              <li>对话界面:消息流、输入框、流式渲染</li>
+              <li>配置向导 / 设置页</li>
+              <li>不持有 Agent 状态,只有"当前显示的消息"</li>
+            </ul>
+          </div>
+          <div class="ipc">▲ IPC(事件流:文本增量 / turn 结束 / 错误)▼</div>
+          <div class="lane hub-lane">
+            <div class="lane-title">主进程 = Agent Hub(V0 载体)</div>
+            <ul>
+              <li>createAgentSession:模型对话、流式事件源</li>
+              <li>会话历史 / 配置 / API Key(本机存储)</li>
+              <li>窗口管理 + 托盘常驻</li>
+            </ul>
+          </div>
+        </div>
+        <p class="note">窗口关闭 ≠ 进程退出:Hub 随主进程常驻,窗口只是 Hub 的一个可重建的"视图"。</p>
+      </section>
+
+      <h2>3. 四个关键含义</h2>
+      <section>
+        <ol class="insights">
+          <li>
+            <b>生命周期解耦</b> — 关窗只销毁视图,Hub
+            常驻;托盘"退出"才真正结束进程。会话保持(F3)靠的不是"保存窗口",而是 Hub 一直活着。
+          </li>
+          <li>
+            <b>状态归属</b> — 上下文、会话历史、模型配置全部在 Hub
+            侧;渲染进程是无状态客户端,重开窗口 = 从 Hub 拉回历史继续聊。
+          </li>
+          <li>
+            <b>接口即未来协议</b> — V0 里客户端 ↔ Hub 走 IPC,但 IPC
+            通道的语义按"通信协议"设计(消息增量、turn
+            生命周期、错误事件),而不是按"内部函数调用"设计。今天的事件流就是 V2 网络协议的设计稿。
+          </li>
+          <li>
+            <b>演进靠接口稳定,不靠重写</b> — V1 把 Hub 抽成独立进程、V2
+            加网络监听,替换的只是传输层(IPC → 网络),客户端代码与 Hub 内部不用推倒重来。
+          </li>
+        </ol>
+      </section>
+
+      <h2>4. 演进路径</h2>
+      <section>
+        <div class="timeline">
+          <div class="stage now">
+            <span class="ver">V0</span>
+            <ul>
+              <li>Hub 承载于 Electron 主进程</li>
+              <li>单一桌面客户端</li>
+              <li>本机对话 + 托盘常驻 + 首次向导</li>
+            </ul>
+          </div>
+          <div class="stage">
+            <span class="ver ghost">V1</span>
+            <ul>
+              <li>Hub 抽成独立进程(接口不变)</li>
+              <li>设备感知 + 长期记忆 + 自定义工具</li>
+            </ul>
+          </div>
+          <div class="stage">
+            <span class="ver ghost">V2</span>
+            <ul>
+              <li>Hub 开放局域网/公网端口</li>
+              <li>手机 PWA 接入同一内核</li>
+            </ul>
+          </div>
+        </div>
+        <p class="note">
+          每一步都是"换个传输层/加点能力",架构骨架(内核—客户端分离)从 V0 起就不变。
+        </p>
+      </section>
+    </div>
+  </body>
+</html>
