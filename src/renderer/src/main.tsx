@@ -5,11 +5,15 @@ import './assets/main.css';
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { HashRouter } from 'react-router';
 import App from './App';
 
-// 用 createRoot 而非 ReactDOM.render:React 18+ 的并发渲染 API,老 API 已废弃
+// 用 HashRouter 而非 BrowserRouter:生产环境经 file:// 加载,
+// path 路由在 file 协议下无法工作,hash 路由不依赖服务端路径解析。
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <HashRouter>
+      <App />
+    </HashRouter>
   </StrictMode>
 );
