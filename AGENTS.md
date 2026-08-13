@@ -32,3 +32,17 @@
 
 - `resources/` 随应用打包、运行时读取;`build/` 仅打包时使用(安装包图标、签名文件)
 - `.agents/skills/` — 项目内 AI 技能(来自 mattpocock/skills)
+
+## Agent skills
+
+### Issue tracker
+
+Issues 与 PRD 存于 GitHub Issues,统一用 gh CLI 操作。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个 triage 角色标签(needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix),中文含义见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文:根目录 `CONTEXT.md` + `docs/adr/`(文件不存在时静默跳过,由 /domain-modeling 按需创建)。见 `docs/agents/domain.md`。
