@@ -95,7 +95,11 @@ function WizardPage(): React.JSX.Element {
             <StepApiKey
               provider={provider}
               apiKey={apiKey}
-              onApiKeyChange={setApiKey}
+              onApiKeyChange={(value) => {
+                // Key 一旦修改,旧测试结果作废:下一步必须基于"当前 Key 测试通过"
+                setApiKey(value);
+                setTestResult(null);
+              }}
               testing={testing}
               testResult={testResult}
               onTest={() => {
