@@ -88,7 +88,11 @@ export async function testConnection(
   );
 
   try {
-    await stream.result();
+    const result = await stream.result();
+    // Pi 的事件流在 API 报错时不 reject:错误以 stopReason: 'error' 的消息收尾,必须显式检查
+    if (result.stopReason === 'error') {
+      return { ok: false, message: result.errorMessage ?? '连接失败' };
+    }
     return { ok: true };
   } catch (error) {
     const isTimeout = error instanceof Error && error.name === 'TimeoutError';
