@@ -2,11 +2,14 @@
  * @file 客户端侧协议封装。
  *
  * 渲染进程只依赖本模块与 Hub 通信,业务代码不直接触碰 window.electron。
- * 组件层通过 hooks(后续实现)消费事件流。
+ * invoke 型调用经协议表类型化:参数与返回值由 HubProtocol 推导。
  */
 import {
   HUB_CHANNELS,
+  hubChannel,
   type HubEvent,
+  type HubInvokeChannel,
+  type HubProtocol,
   type ModelConfig,
   type ModelInfo,
   type PromptRequest,
@@ -49,7 +52,7 @@ export function subscribeHubEvents(listener: (event: HubEvent) => void): () => v
  * @returns 配置;未配置或损坏为 null
  */
 export function getConfig(): Promise<ModelConfig | null> {
-  return window.electron.ipcRenderer.invoke(HUB_CHANNELS.configGet) as Promise<ModelConfig | null>;
+  return invoke('configGet', undefined);
 }
 
 /**
@@ -58,7 +61,7 @@ export function getConfig(): Promise<ModelConfig | null> {
  * @param config - 配置
  */
 export function saveConfig(config: ModelConfig): Promise<void> {
-  return window.electron.ipcRenderer.invoke(HUB_CHANNELS.configSave, config) as Promise<void>;
+  return invoke('configSave', config);
 }
 
 /**
@@ -68,10 +71,7 @@ export function saveConfig(config: ModelConfig): Promise<void> {
  * @returns 测试结果
  */
 export function testConnection(request: TestConnectionRequest): Promise<TestConnectionResult> {
-  return window.electron.ipcRenderer.invoke(
-    HUB_CHANNELS.configTest,
-    request
-  ) as Promise<TestConnectionResult>;
+  return invoke('configTest', request);
 }
 
 /**
@@ -80,7 +80,7 @@ export function testConnection(request: TestConnectionRequest): Promise<TestConn
  * @returns Provider 列表
  */
 export function listProviders(): Promise<ProviderInfo[]> {
-  return window.electron.ipcRenderer.invoke(HUB_CHANNELS.providersList) as Promise<ProviderInfo[]>;
+  return invoke('providersList', undefined);
 }
 
 /**
@@ -90,7 +90,24 @@ export function listProviders(): Promise<ProviderInfo[]> {
  * @returns 模型列表
  */
 export function listModels(providerId: string): Promise<ModelInfo[]> {
-  return window.electron.ipcRenderer.invoke(HUB_CHANNELS.modelsList, providerId) as Promise<
-    ModelInfo[]
+  return invoke('modelsList', providerId);
+}
+
+/**
+ * 按协议表发起 invoke 调用。
+ *
+ * 请求/响应类型由 HubProtocol 推导;仅此一处保留 as 断言(Electron 桥的边界),
+ * 各业务函数不再各自断言。
+ *
+ * @param name - 协议表 key
+ * @param request - 请求体
+ * @returns 响应
+ */
+function invoke<K extends HubInvokeChannel>(
+  name: K,
+  request: HubProtocol[K]['request']
+): Promise<HubProtocol[K]['response']> {
+  return window.electron.ipcRenderer.invoke(hubChannel(name), request) as Promise<
+    HubProtocol[K]['response']
   >;
 }

@@ -5,7 +5,7 @@
  * V0 走 Electron IPC;V2 换网络传输时,本协议语义保持不变,只换传输层。
  */
 
-/** IPC 通道名(渲染进程 ↔ 主进程) */
+/** 消息型通道名(发送/推送,无请求响应配对;渲染进程 ↔ 主进程) */
 export const HUB_CHANNELS = {
   /** 渲染 → 主:发送一条用户消息 */
   prompt: 'hub:prompt',
@@ -13,17 +13,40 @@ export const HUB_CHANNELS = {
   abort: 'hub:abort',
   /** 主 → 渲染:Hub 事件流 */
   events: 'hub:events',
-  /** 渲染 → 主:读取模型配置(返回 ModelConfig 或 null) */
-  configGet: 'hub:config:get',
-  /** 渲染 → 主:保存模型配置 */
-  configSave: 'hub:config:save',
-  /** 渲染 → 主:测试连接(返回 TestConnectionResult) */
-  configTest: 'hub:config:test',
-  /** 渲染 → 主:列出可选 Provider */
-  providersList: 'hub:providers:list',
-  /** 渲染 → 主:列出指定 Provider 的模型 */
-  modelsList: 'hub:models:list',
 } as const;
+
+/**
+ * Hub 协议表:invoke 型通道的单一事实来源。
+ *
+ * key = 通道逻辑名,通道字符串由 hubChannel() 自动派生(configGet → hub:config:get);
+ * request / response 是该通道的收发类型,主进程注册与渲染端调用都从这里拿类型。
+ * V2 换网络传输时,这张表就是协议的定义,两端实现重写即可。
+ */
+export interface HubProtocol {
+  /** 读取模型配置(返回 ModelConfig 或 null) */
+  configGet: { request: void; response: ModelConfig | null };
+  /** 保存模型配置 */
+  configSave: { request: ModelConfig; response: void };
+  /** 测试连接 */
+  configTest: { request: TestConnectionRequest; response: TestConnectionResult };
+  /** 列出可选 Provider */
+  providersList: { request: void; response: ProviderInfo[] };
+  /** 列出指定 Provider 的模型 */
+  modelsList: { request: string; response: ModelInfo[] };
+}
+
+/** 协议表中的通道名 */
+export type HubInvokeChannel = keyof HubProtocol;
+
+/**
+ * 派生通道字符串:configGet → hub:config:get。
+ *
+ * @param name - 协议表 key
+ * @returns IPC 通道字符串
+ */
+export function hubChannel(name: HubInvokeChannel): string {
+  return `hub:${name.replace(/[A-Z]/g, (char) => `:${char.toLowerCase()}`)}`;
+}
 
 /** 用户发送消息的请求体 */
 export interface PromptRequest {
