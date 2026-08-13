@@ -40,6 +40,13 @@ export default defineConfig(
     },
   },
   {
+    // shadcn 生成的组件同时导出 cva 变体常量(如 buttonVariants),与 HMR 规则冲突
+    files: ['src/renderer/src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+  {
     files: ['src/renderer/**/*.{ts,tsx}'],
     rules: {
       'no-console': 'warn',
