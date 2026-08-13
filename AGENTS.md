@@ -18,6 +18,14 @@ bun run build:mac    # 打包 mac(另有 build:win / build:linux / build:unpack)
 
 提交前必须通过 `bun run lint && bun run typecheck`。
 
+## Commit 规范
+
+commitlint + husky 强制校验,格式:`<type>: <中文描述>`
+
+- 允许的 type:feat、fix、docs、style、refactor、perf、test、build、ci、chore、revert
+- 描述用中文,简洁说明变更内容,如 `feat: 新增窗口管理`、`fix: 修复启动崩溃`
+- 不符合规范的 commit 会被拒绝
+
 ## 代码规范
 
 - Prettier:单引号、**有分号**(semi: true)、printWidth 100、trailingComma es5
