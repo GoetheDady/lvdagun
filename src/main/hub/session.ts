@@ -10,14 +10,14 @@ import { homedir } from 'node:os';
 import {
   createAgentSession,
   DefaultResourceLoader,
-  getAgentDir,
-  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type AgentSessionEvent,
 } from '@earendil-works/pi-coding-agent';
 import type { ChatMessage, HubEvent, PromptRequest } from '../../shared/ipc';
+import { DATA_DIR } from './config';
+import { getModelRuntime } from './runtime';
 
 /** Hub 会话:内核与客户端之间唯一的契约 */
 export interface HubSession {
@@ -69,7 +69,7 @@ const DEFAULT_SYSTEM_PROMPT = '你是驴打滚,运行在用户电脑上的个人
  * @throws 模型不存在或初始化失败
  */
 export async function createHubSession(options: CreateHubSessionOptions): Promise<HubSession> {
-  const modelRuntime = await ModelRuntime.create();
+  const modelRuntime = await getModelRuntime();
   if (options.apiKey) {
     await modelRuntime.setRuntimeApiKey(options.provider, options.apiKey);
   }
@@ -81,9 +81,10 @@ export async function createHubSession(options: CreateHubSessionOptions): Promis
 
   // 关闭 skills/上下文文件发现:项目里的 AGENTS.md、.agents/skills 是给编码代理用的,
   // 注入个人管家会产生干扰。cwd 用主目录,为 V1 文件工具铺路。
+  // agentDir 指向自己的数据目录:扩展/提示词发现与 ~/.pi/agent 无关。
   const loader = new DefaultResourceLoader({
     cwd: homedir(),
-    agentDir: getAgentDir(),
+    agentDir: DATA_DIR,
     systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     noSkills: true,
     noContextFiles: true,
@@ -91,6 +92,8 @@ export async function createHubSession(options: CreateHubSessionOptions): Promis
   await loader.reload();
 
   const { session } = await createAgentSession({
+    cwd: homedir(),
+    agentDir: DATA_DIR,
     model,
     modelRuntime,
     resourceLoader: loader,
