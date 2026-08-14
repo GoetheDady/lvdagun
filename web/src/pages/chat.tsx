@@ -5,130 +5,45 @@ import { Loader2, RotateCcw, Send, Settings, Trash2 } from 'lucide-react';
 import type { ChatMessage } from '@lvdagun/backend';
 
 import { Button } from '@/components/ui/button';
-import { api, subscribeEvents } from '@/lib/api';
+import { useChatSession } from '@/hooks/use-chat-session';
 
 /** 空状态示例建议(点击填入输入框,PRD 7) */
 const SUGGESTIONS = ['今天有什么值得关注的新闻?', '帮我写一个快速排序', '什么是复利?'];
 
-/** 对话错误(重试 = 重发最后一条用户消息) */
-interface ChatError {
-  message: string;
-  retryable: boolean;
-}
-
 /**
  * 对话页:消息流、输入框、流式渲染、清空会话(PRD 6.1)。
  *
- * 消息来源两个渠道:挂载时拉历史(会话保持,PRD F3),之后靠 SSE 事件增量更新。
+ * 薄适配器:会话语义全部在 useChatSession 里,这里只做渲染与 UI 交互
+ * (输入状态、滚动、确认弹窗)。
  *
  * @returns 对话页元素
  */
 function ChatPage(): React.JSX.Element {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  /** 正在流式输出的 AI 文本(未定稿) */
-  const [pending, setPending] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<ChatError | null>(null);
+  const { messages, pending, streaming, error, sending, send, retry, clear } = useChatSession();
   const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // 先拉历史、再订阅事件:若先订阅,历史返回时 setMessages 会覆盖已到达的 SSE 事件
-    let cancelled = false;
-    let unsubscribe: (() => void) | null = null;
-    void (async () => {
-      try {
-        const history = await api.getMessages();
-        if (!cancelled) setMessages(history);
-      } catch {
-        if (!cancelled) setMessages([]);
-      }
-      if (cancelled) return;
-      unsubscribe = subscribeEvents((event) => {
-        switch (event.type) {
-          case 'user_message':
-            setMessages((prev) => [...prev, event.message]);
-            break;
-          case 'assistant_message_start':
-            setStreaming(true);
-            setPending('');
-            setError(null);
-            break;
-          case 'assistant_text_delta':
-            setPending((prev) => prev + event.delta);
-            break;
-          case 'assistant_message_end':
-            setStreaming(false);
-            setPending('');
-            setMessages((prev) => [...prev, event.message]);
-            break;
-          case 'session_cleared':
-            setMessages([]);
-            break;
-          case 'error':
-            setError({ message: event.message, retryable: event.retryable });
-            break;
-        }
-      }, (errorEvent) => setError({ message: errorEvent.message, retryable: false }));
-    })();
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
-  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, pending]);
 
   /**
-   * 发送文本:统一处理 pending/错误,供发送与重试共用。
-   *
-   * @param text - 要发送的文本
+   * 输入框发送:清空输入后交给会话模块。
    */
-  const sendText = async (text: string): Promise<void> => {
-    setError(null);
-    setSending(true);
-    try {
-      await api.prompt(text);
-    } catch (errorEvent) {
-      setError({
-        message: errorEvent instanceof Error ? errorEvent.message : String(errorEvent),
-        retryable: true,
-      });
-    } finally {
-      setSending(false);
-    }
-  };
-
-  /**
-   * 输入框发送:清空输入后发消息。
-   */
-  const handleSend = async (): Promise<void> => {
+  const handleSend = (): void => {
     const text = input.trim();
     if (!text || sending || streaming) return;
     setInput('');
-    await sendText(text);
+    void send(text);
   };
 
   /**
-   * 错误重试:重发最后一条用户消息(PRD 7 错误态)。
-   */
-  const handleRetry = (): void => {
-    const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-    if (lastUser) {
-      void sendText(lastUser.text);
-    }
-  };
-
-  /**
-   * 清空会话(带确认,PRD 6.1)。
+   * 清空会话(带确认,PRD 6.1;确认弹窗是 UI 职责,留在页面)。
    */
   const handleClear = (): void => {
     if (window.confirm('确定清空当前会话吗?')) {
-      void api.clearSession();
+      clear();
     }
   };
 
@@ -188,7 +103,7 @@ function ChatPage(): React.JSX.Element {
                   variant="outline"
                   size="sm"
                   className="self-start border-destructive text-destructive hover:bg-destructive/10"
-                  onClick={handleRetry}
+                  onClick={retry}
                 >
                   <RotateCcw />
                   重试
@@ -211,16 +126,14 @@ function ChatPage(): React.JSX.Element {
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                void handleSend();
+                handleSend();
               }
             }}
           />
           <Button
             className="self-end"
             disabled={!input.trim() || sending || streaming}
-            onClick={() => {
-              void handleSend();
-            }}
+            onClick={handleSend}
           >
             {sending ? <Loader2 className="animate-spin" /> : <Send />}
             发送
