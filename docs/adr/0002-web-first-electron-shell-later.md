@@ -9,7 +9,7 @@ V0 以「本地服务 + 浏览器」交付:Agent Hub 承载于本机 Web 服务�
 
 **Consequences**:
 
-- 仓库为 backend(本地服务)/ web(浏览器客户端)双包 workspace,原 Electron 代码删除、V0 从零重写
+- 本地服务与浏览器客户端保持独立应用;具体 workspace 布局与共享协议边界见 ADR-0003
 - PRD V0 改写:「托盘常驻/关窗≠退出」改为「服务常驻/关标签≠服务停止」,启动方式为 CLI + 浏览器
 - 服务监听 localhost 引入 CSRF 风险,API 需 token 校验
 - V0 的对话会话存服务进程内存,服务停止即丢

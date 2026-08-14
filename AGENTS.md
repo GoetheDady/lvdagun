@@ -1,6 +1,6 @@
 # AGENTS.md
 
-驴打滚(lvdagun)— 本机自托管的个人 AI 管家:bun workspace 双包(backend 本地服务承载 Agent Hub,web 为浏览器客户端),TypeScript 全栈。
+驴打滚(lvdagun)— 本机自托管的个人 AI 管家:Bun workspace 多包项目,包含本地服务、浏览器客户端和共享通信协议,TypeScript 全栈。
 
 ## 命令
 
@@ -16,6 +16,10 @@
 
 - 注释用中文;函数与组件写完整 JSDoc(@param、@returns、@throws 按需)
 - 关键逻辑注释写"为什么":这么写的原因、不这么写的后果;简单代码不写注释
+- 自有源码、测试与普通文档的文件名及目录名使用英文小写 kebab-case;生态约定名称(如 `README.md`、`AGENTS.md`、`vite.config.ts`)保持原样
+- TypeScript/JavaScript 标识符遵循语言惯例:组件和类型使用 PascalCase,函数、Hook 与变量使用 camelCase
+- 测试统一放在各包的 `tests/` 目录,子目录与文件 basename 镜像被测源码
+- 前端源码按技术类型归档;避免使用职责不明确的 `lib` 目录
 
 ## 架构原则
 
@@ -30,8 +34,9 @@
 
 ## 目录结构
 
-- `backend/` — 本地服务(Express + Pi SDK);`web/` — 浏览器客户端(Vite + React)
-- 测试文件统一放各包的 `tests/` 目录(`backend/tests/`、`web/tests/`)
+- `apps/backend/` — 本地服务(Express + Pi SDK);`apps/web/` — 浏览器客户端(Vite + React)
+- `packages/protocol/` — 客户端与本地服务共享的数据结构、事件格式与传输约定
+- 测试文件统一放各应用的 `tests/` 目录(`apps/backend/tests/`、`apps/web/tests/`)
 - `.agents/skills/` — 项目内 AI 技能(来自 mattpocock/skills)
 
 ## Agent skills

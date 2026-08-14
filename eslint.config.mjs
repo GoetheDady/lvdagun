@@ -10,13 +10,13 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['backend/**/*.ts'],
+    files: ['apps/backend/**/*.ts', 'packages/protocol/**/*.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },
   },
   {
-    files: ['web/src/**/*.{ts,tsx}'],
+    files: ['apps/web/src/**/*.{ts,tsx}'],
     languageOptions: {
       globals: { ...globals.browser },
     },
@@ -37,7 +37,7 @@ export default tseslint.config(
   },
   {
     // shadcn 风格组件库:文件同时导出组件与 variants 常量,不适用 Fast Refresh 约束
-    files: ['web/src/components/ui/**/*.tsx'],
+    files: ['apps/web/src/components/ui/**/*.tsx'],
     rules: {
       'react-refresh/only-export-components': 'off',
     },
