@@ -1,6 +1,6 @@
 # AGENTS.md
 
-驴打滚(lvdagun)— 基于 electron-vite 的 Electron + React + TypeScript 桌面应用。
+驴打滚(lvdagun)— 本机自托管的个人 AI 管家:bun workspace 双包(backend 本地服务承载 Agent Hub,web 为浏览器客户端),TypeScript 全栈。
 
 ## 命令
 
@@ -30,7 +30,7 @@
 
 ## 目录结构
 
-- `resources/` 随应用打包、运行时读取;`build/` 仅打包时使用(安装包图标、签名文件)
+- `backend/` — 本地服务(Express + Pi SDK);`web/` — 浏览器客户端(Vite + React)
 - `.agents/skills/` — 项目内 AI 技能(来自 mattpocock/skills)
 
 ## Agent skills
