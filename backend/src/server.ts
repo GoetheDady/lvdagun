@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 import { parseModelConfig, type ConfigStore } from './config';
-import type { Hub, HubSession } from './hub';
-import type { ChatMessage, HubEvent, ModelConfig } from './protocol';
+import type { Hub } from './hub';
+import type { HubEvent, ModelConfig } from './protocol';
+import { createSessionManager, NotConfiguredError } from './session-manager';
 
 /** 装配服务所需的依赖(测试注入假实现) */
 export interface ServerDeps {
@@ -20,16 +21,6 @@ export interface ServerDeps {
   token: string;
   /** web 构建产物目录;未提供时仅提供 API(dev 模式由 vite 提供页面) */
   webDist?: string;
-}
-
-/** 带 HTTP 状态码的业务错误,由错误中间件转成 JSON 响应 */
-class HttpError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
 }
 
 /**
@@ -147,11 +138,11 @@ export function createServer(deps: ServerDeps): express.Express {
     });
   }
 
-  // 错误中间件:HttpError 按状态码返回,其余按 500(express 5 自动把 async 异常送到这里)
+  // 错误中间件:领域错误与 express 解析错误映射为状态码,其余按 500(express 5 自动把 async 异常送到这里)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- express 要求 4 参数才识别为错误中间件
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (error instanceof HttpError) {
-      res.status(error.status).json({ error: error.message });
+    if (error instanceof NotConfiguredError) {
+      res.status(409).json({ error: error.message });
       return;
     }
     const status = isStatusError(error) ? error.status : 500;
@@ -163,77 +154,6 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   return app;
-}
-
-/**
- * 会话管理:懒创建、配置变更失效、事件广播。
- *
- * @param hub - Hub 能力
- * @param configStore - 配置存取
- * @param broadcast - 事件广播函数(发给所有 SSE 客户端)
- * @returns 会话管理操作集
- */
-function createSessionManager(
-  hub: Hub,
-  configStore: ConfigStore,
-  broadcast: (event: HubEvent) => void
-): {
-  /** 获取当前会话;未配置时抛 409,配置变更时按新配置重建 */
-  getSession(): Promise<HubSession>;
-  /** 当前会话消息历史;无会话时为空 */
-  getMessages(): ChatMessage[];
-  /** 清空会话并向所有客户端广播 */
-  clear(): void;
-  /** 配置变更后作废当前会话(下次对话重建) */
-  invalidate(): void;
-} {
-  let session: HubSession | null = null;
-  /** 创建会话时用的配置指纹:配置不变就复用会话 */
-  let sessionKey: string | null = null;
-  let unsubscribe: (() => void) | null = null;
-
-  const dispose = (): void => {
-    unsubscribe?.();
-    unsubscribe = null;
-    session?.dispose();
-    session = null;
-    sessionKey = null;
-  };
-
-  const keyOf = (config: ModelConfig): string => `${config.provider}\n${config.modelId}\n${config.apiKey}`;
-
-  return {
-    async getSession(): Promise<HubSession> {
-      const config = await configStore.load();
-      if (!config) {
-        throw new HttpError(409, '尚未配置模型');
-      }
-      const key = keyOf(config);
-      if (!session || sessionKey !== key) {
-        dispose();
-        session = await hub.createSession(config);
-        sessionKey = key;
-        unsubscribe = session.subscribe(broadcast);
-      }
-      return session;
-    },
-
-    getMessages() {
-      return session ? session.getMessages() : [];
-    },
-
-    clear(): void {
-      const hadSession = session !== null;
-      dispose();
-      if (hadSession) {
-        broadcast({ type: 'session_cleared' });
-      }
-    },
-
-    invalidate(): void {
-      dispose();
-    },
-  };
 }
 
 /**
