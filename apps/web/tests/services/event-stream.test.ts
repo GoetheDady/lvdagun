@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HubEvent } from '@lvdagun/protocol';
+import type { AgentStreamEvent } from '@lvdagun/protocol';
 
 import { subscribeEvents } from '@/services/event-stream';
 
@@ -38,27 +38,23 @@ describe('subscribeEvents', () => {
   it('逐帧解析 SSE 事件并按序回调', async () => {
     vi.mocked(fetch).mockResolvedValue(
       sseResponse([
-        'data: {"type":"user_message","message":{"id":"u1","role":"user","text":"你好"}}\n\n',
-        'data: {"type":"assistant_message_start","messageId":"a1"}\n\ndata: {"type":"assistant_t',
-        'ext_delta","messageId":"a1","delta":"嗨"}\n\n',
+        'data: {"type":"agent_start"}\n\n',
+        'data: {"type":"message_start","message":{"role":"user","content":"你好","timestamp":1}}\n\ndata: {"type":"message_up',
+        'date","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"嗨"}}\n\n',
       ])
     );
     localStorage.setItem('lvdagun-token', 'tok');
 
-    const events: HubEvent[] = [];
+    const events: AgentStreamEvent[] = [];
     subscribeEvents((event) => events.push(event));
 
     await vi.waitFor(() => {
       expect(events.length).toBe(3);
     });
-    expect(events[0]).toEqual({
-      type: 'user_message',
-      message: { id: 'u1', role: 'user', text: '你好' },
-    });
+    expect(events[0]).toEqual({ type: 'agent_start' });
     expect(events[2]).toEqual({
-      type: 'assistant_text_delta',
-      messageId: 'a1',
-      delta: '嗨',
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '嗨' },
     });
 
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;

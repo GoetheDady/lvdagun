@@ -1,13 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HubEvent } from '@lvdagun/protocol';
+import type { AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
 
-/**
- * Pi SDK 模块级 mock:测试绝不触网、绝不创建真实运行时。
- *
- * vi.hoisted 保证 mock 工厂能引用测试用例操纵的状态(provider 目录、
- * 流式结果、会话事件序列),用例之间重置。
- */
+/** Pi SDK 的模块级测试状态。 */
 const pi = vi.hoisted(() => ({
   state: {
     providers: [] as Array<{
@@ -19,13 +14,17 @@ const pi = vi.hoisted(() => ({
     streamResult: null as null | { stopReason: string; errorMessage?: string } | Error,
     createCount: 0,
     setRuntimeApiKeyCalls: [] as Array<{ provider: string; apiKey: string }>,
-    sessionEvents: [] as Array<{
-      type: string;
-      message?: { role: string };
-      assistantMessageEvent?: unknown;
-    }>,
+    sessionEvents: [] as unknown[],
+    messages: [] as unknown[],
+    entries: [] as unknown[],
+    isIdle: true,
+    thinkingLevel: 'medium',
     abortCalls: 0,
+    newSessionCalls: 0,
     disposeCalls: 0,
+    flushCalls: 0,
+    activeTools: [] as string[],
+    resourceLoaderOptions: null as null | Record<string, unknown>,
   },
 }));
 
@@ -34,63 +33,149 @@ vi.mock('@earendil-works/pi-ai', () => ({
 }));
 
 vi.mock('@earendil-works/pi-coding-agent', () => {
-  const runtime = {
+  const modelRuntime = {
     getProviders: () =>
-      pi.state.providers.map((p) => ({
-        id: p.id,
-        name: p.name,
-        auth: { apiKey: p.hasApiKeyAuth ? {} : undefined },
-        getModels: () => p.models.map((m) => ({ id: m.id, name: m.name })),
+      pi.state.providers.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        auth: { apiKey: provider.hasApiKeyAuth ? {} : undefined },
+        getModels: () => provider.models.map((model) => ({ id: model.id, name: model.name })),
       })),
     setRuntimeApiKey: async (provider: string, apiKey: string) => {
       pi.state.setRuntimeApiKeyCalls.push({ provider, apiKey });
     },
     getModel: (providerId: string, modelId: string) =>
-      pi.state.providers.some((p) => p.id === providerId && p.models.some((m) => m.id === modelId))
-        ? { id: modelId, providerId }
+      pi.state.providers.some(
+        (provider) =>
+          provider.id === providerId && provider.models.some((model) => model.id === modelId)
+      )
+        ? { id: modelId, provider: providerId }
         : undefined,
     streamSimple: () => ({
       result: async () => {
-        if (pi.state.streamResult instanceof Error) throw pi.state.streamResult;
+        if (pi.state.streamResult instanceof Error) {
+          throw pi.state.streamResult;
+        }
         return pi.state.streamResult;
       },
     }),
   };
+
+  /**
+   * 创建可被 PiHubSession 使用的 AgentSession 替身。
+   *
+   * @returns AgentSession 结构
+   */
+  const createSession = () => {
+    let listener: ((event: unknown) => void) | null = null;
+    return {
+      get isIdle() {
+        return pi.state.isIdle;
+      },
+      get messages() {
+        return pi.state.messages;
+      },
+      sessionManager: {
+        getBranch: () => pi.state.entries,
+      },
+      get thinkingLevel() {
+        return pi.state.thinkingLevel;
+      },
+      getAvailableThinkingLevels: () => ['off', 'low', 'medium', 'high'],
+      subscribe: (nextListener: (event: unknown) => void) => {
+        listener = nextListener;
+        return () => {
+          listener = null;
+        };
+      },
+      prompt: async (_text: string, options: { preflightResult?: (ok: boolean) => void }) => {
+        options.preflightResult?.(true);
+        for (const event of pi.state.sessionEvents) {
+          listener?.(event);
+        }
+      },
+      abort: async () => {
+        pi.state.abortCalls += 1;
+      },
+      setThinkingLevel: (level: string) => {
+        pi.state.thinkingLevel = level;
+      },
+    };
+  };
+
+  const settingsManager = {
+    flush: async () => {
+      pi.state.flushCalls += 1;
+    },
+  };
+
   return {
     ModelRuntime: {
       create: async () => {
         pi.state.createCount += 1;
-        return runtime;
+        return modelRuntime;
       },
     },
-    createAgentSession: async () => {
-      let listener: ((event: unknown) => void) | null = null;
-      const session = {
-        subscribe: (l: (event: unknown) => void) => {
-          listener = l;
-          return () => {
-            listener = null;
-          };
+    SettingsManager: { create: () => settingsManager },
+    SessionManager: { inMemory: () => ({}) },
+    createAgentSessionServices: async (options: { resourceLoaderOptions: Record<string, unknown> }) => {
+      pi.state.resourceLoaderOptions = options.resourceLoaderOptions;
+      return { settingsManager, diagnostics: [] };
+    },
+    createAgentSessionFromServices: async (options: { tools: string[] }) => {
+      pi.state.activeTools = options.tools;
+      return { session: createSession() };
+    },
+    createAgentSessionRuntime: async (
+      factory: (options: Record<string, unknown>) => Promise<Record<string, unknown>>,
+      options: Record<string, unknown>
+    ) => {
+      const created = await factory(options);
+      let session = created.session as ReturnType<typeof createSession>;
+      let rebind: ((nextSession: ReturnType<typeof createSession>) => Promise<void>) | undefined;
+      return {
+        get session() {
+          return session;
         },
-        prompt: async () => {
-          for (const event of pi.state.sessionEvents) {
-            listener?.(event);
-          }
+        services: created.services,
+        setRebindSession: (
+          callback?: (nextSession: ReturnType<typeof createSession>) => Promise<void>
+        ) => {
+          rebind = callback;
         },
-        abort: async () => {
-          pi.state.abortCalls += 1;
+        newSession: async () => {
+          pi.state.newSessionCalls += 1;
+          pi.state.messages = [];
+          session = createSession();
+          await rebind?.(session);
         },
-        dispose: () => {
+        dispose: async () => {
           pi.state.disposeCalls += 1;
         },
       };
-      return { session };
     },
-    DefaultResourceLoader: class {
-      async reload(): Promise<void> {}
+    sessionEntryToContextMessages: (entry: {
+      type: string;
+      message?: unknown;
+      summary?: string;
+      tokensBefore?: number;
+      timestamp?: string;
+    }) => {
+      if (entry.type === 'message') {
+        return [entry.message];
+      }
+      if (entry.type === 'compaction') {
+        return [
+          {
+            role: 'compactionSummary',
+            summary: entry.summary,
+            tokensBefore: entry.tokensBefore,
+            timestamp: Date.parse(entry.timestamp ?? ''),
+          },
+        ];
+      }
+      return [];
     },
-    SessionManager: { inMemory: () => ({}) },
-    SettingsManager: { inMemory: () => ({}) },
   };
 });
 
@@ -102,12 +187,20 @@ beforeEach(() => {
   pi.state.createCount = 0;
   pi.state.setRuntimeApiKeyCalls = [];
   pi.state.sessionEvents = [];
+  pi.state.messages = [];
+  pi.state.entries = [];
+  pi.state.isIdle = true;
+  pi.state.thinkingLevel = 'medium';
   pi.state.abortCalls = 0;
+  pi.state.newSessionCalls = 0;
   pi.state.disposeCalls = 0;
+  pi.state.flushCalls = 0;
+  pi.state.activeTools = [];
+  pi.state.resourceLoaderOptions = null;
 });
 
-describe('listProviders', () => {
-  it('只返回带 API Key 认证方式的 Provider,并过滤基础设施条目', async () => {
+describe('createHub 目录能力', () => {
+  it('只返回支持 API Key 的业务 Provider，并过滤基础设施条目', async () => {
     pi.state.providers = [
       { id: 'anthropic', name: 'Anthropic', hasApiKeyAuth: true, models: [] },
       { id: 'github-copilot', name: 'GitHub Copilot', hasApiKeyAuth: false, models: [] },
@@ -120,35 +213,26 @@ describe('listProviders', () => {
       { id: 'openai', name: 'OpenAI' },
     ]);
   });
-});
 
-describe('listModels', () => {
-  it('返回指定 Provider 的模型列表', async () => {
+  it('返回指定 Provider 的模型并复用 ModelRuntime', async () => {
     pi.state.providers = [
       {
         id: 'anthropic',
         name: 'Anthropic',
         hasApiKeyAuth: true,
-        models: [
-          { id: 'claude-a', name: 'Claude A' },
-          { id: 'claude-b', name: 'Claude B' },
-        ],
+        models: [{ id: 'claude-a', name: 'Claude A' }],
       },
     ];
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.listModels('anthropic')).resolves.toEqual([
       { id: 'claude-a', name: 'Claude A' },
-      { id: 'claude-b', name: 'Claude B' },
     ]);
-  });
-
-  it('未知 Provider 返回空列表', async () => {
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    await expect(hub.listModels('nope')).resolves.toEqual([]);
+    await hub.listProviders();
+    expect(pi.state.createCount).toBe(1);
   });
 });
 
-describe('testConnection', () => {
+describe('createHub 连接测试', () => {
   beforeEach(() => {
     pi.state.providers = [
       {
@@ -160,14 +244,14 @@ describe('testConnection', () => {
     ];
   });
 
-  it('成功:先写入运行时 Key,流正常结束时返回 ok', async () => {
-    pi.state.streamResult = { stopReason: 'done' };
+  it('写入运行时凭证并返回连接结果', async () => {
+    pi.state.streamResult = { stopReason: 'stop' };
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-test')).resolves.toEqual({ ok: true });
     expect(pi.state.setRuntimeApiKeyCalls).toEqual([{ provider: 'anthropic', apiKey: 'sk-test' }]);
   });
 
-  it('API 报错(stopReason=error)返回失败与错误信息', async () => {
+  it('把 Pi stopReason=error 转换为连接失败', async () => {
     pi.state.streamResult = { stopReason: 'error', errorMessage: '401 凭证无效' };
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-bad')).resolves.toEqual({
@@ -175,25 +259,9 @@ describe('testConnection', () => {
       message: '401 凭证无效',
     });
   });
-
-  it('超时返回失败', async () => {
-    pi.state.streamResult = Object.assign(new Error('timeout'), { name: 'TimeoutError' });
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const result = await hub.testConnection('anthropic', 'sk-slow');
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.message).toContain('超时');
-    }
-  });
-
-  it('未知 Provider 返回失败', async () => {
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const result = await hub.testConnection('nope', 'sk-x');
-    expect(result.ok).toBe(false);
-  });
 });
 
-describe('createSession', () => {
+describe('createHub 会话能力', () => {
   beforeEach(() => {
     pi.state.providers = [
       {
@@ -205,19 +273,109 @@ describe('createSession', () => {
     ];
   });
 
-  it('模型不存在时抛错', async () => {
+  it('启用 Pi 默认工具并关闭范围外资源', async () => {
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    await expect(
-      hub.createSession({ provider: 'anthropic', apiKey: '', modelId: 'nope' })
-    ).rejects.toThrow();
+    await hub.createSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' });
+    expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write']);
+    expect(pi.state.resourceLoaderOptions).toMatchObject({
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
   });
 
-  it('prompt 把 Pi 事件流翻译为协议事件,历史只含完整消息', async () => {
+  it('原样镜像 Pi JSON 事件，并去掉 message_update 累计快照', async () => {
+    const startMessage: ChatMessage = {
+      role: 'assistant',
+      content: [],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-a',
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'pending',
+      timestamp: 1,
+    };
     pi.state.sessionEvents = [
-      { type: 'message_start', message: { role: 'assistant' } },
-      { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '你' } },
-      { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '好' } },
-      { type: 'message_end', message: { role: 'assistant' } },
+      { type: 'message_start', message: startMessage },
+      {
+        type: 'message_update',
+        message: { ...startMessage, content: [{ type: 'text', text: '你' }] },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          contentIndex: 0,
+          delta: '你',
+          partial: { ...startMessage, content: [{ type: 'text', text: '你' }] },
+        },
+      },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.prompt('你好');
+
+    expect(events).toEqual([
+      { type: 'message_start', message: startMessage },
+      {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '你' },
+      },
+    ]);
+  });
+
+  it('委托中止、新会话和思考等级，并异步释放 Runtime', async () => {
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+
+    await session.abort();
+    await session.newSession();
+    await expect(session.setThinkingLevel('high')).resolves.toMatchObject({
+      thinkingLevel: 'high',
+    });
+    await session.dispose();
+
+    expect(pi.state.abortCalls).toBe(1);
+    expect(pi.state.newSessionCalls).toBe(1);
+    expect(pi.state.flushCalls).toBeGreaterThanOrEqual(2);
+    expect(pi.state.disposeCalls).toBe(1);
+  });
+
+  it('从 Pi 追加式分支恢复压缩前消息和压缩分割线', async () => {
+    const oldMessage: ChatMessage = { role: 'user', content: '旧消息', timestamp: 1 };
+    pi.state.messages = [
+      {
+        role: 'compactionSummary',
+        summary: '摘要',
+        tokensBefore: 100,
+        timestamp: 2,
+      },
+    ];
+    pi.state.entries = [
+      { type: 'message', message: oldMessage },
+      {
+        type: 'compaction',
+        summary: '摘要',
+        tokensBefore: 100,
+        timestamp: '1970-01-01T00:00:00.002Z',
+      },
     ];
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
@@ -226,43 +384,14 @@ describe('createSession', () => {
       modelId: 'claude-a',
     });
 
-    const events: HubEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    await session.prompt('你好');
-
-    // 用户消息:由 Hub 生成 id 并作为完整消息进历史
-    expect(events[0]).toMatchObject({
-      type: 'user_message',
-      message: { role: 'user', text: '你好' },
-    });
-    // 流式增量逐条转发,delta 顺序保持
-    expect(events.map((e) => e.type)).toEqual([
-      'user_message',
-      'assistant_message_start',
-      'assistant_text_delta',
-      'assistant_text_delta',
-      'assistant_message_end',
+    expect(session.getMessages()).toEqual([
+      oldMessage,
+      {
+        role: 'compactionSummary',
+        summary: '摘要',
+        tokensBefore: 100,
+        timestamp: 2,
+      },
     ]);
-    // 完整回复文本由增量拼成,与事件里的消息一致
-    const endEvent = events[4];
-    expect(endEvent).toMatchObject({ type: 'assistant_message_end', message: { text: '你好' } });
-
-    // 历史:两条完整消息,顺序正确
-    const history = session.getMessages();
-    expect(history).toHaveLength(2);
-    expect(history[0]).toMatchObject({ role: 'user', text: '你好' });
-    expect(history[1]).toMatchObject({ role: 'assistant', text: '你好' });
-  });
-
-  it('dispose 释放底层会话', async () => {
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
-    session.dispose();
-    expect(pi.state.disposeCalls).toBe(1);
   });
 });

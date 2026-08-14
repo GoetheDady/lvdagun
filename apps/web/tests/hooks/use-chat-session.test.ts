@@ -1,260 +1,296 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ChatMessage, HubEvent } from '@lvdagun/protocol';
+import type {
+  AgentSessionState,
+  AgentStreamEvent,
+  ChatMessage,
+} from '@lvdagun/protocol';
 
-import { chatReducer, initialState, useChatSession } from '@/hooks/use-chat-session';
+import {
+  applyAssistantUpdate,
+  chatReducer,
+  initialState,
+  type AssistantChatMessage,
+  useChatSession,
+} from '@/hooks/use-chat-session';
 
 vi.mock('@/services/api-client', () => ({
   api: {
-    getConfig: vi.fn(),
-    saveConfig: vi.fn(),
-    testConnection: vi.fn(),
-    listProviders: vi.fn(),
-    listModels: vi.fn(),
     getMessages: vi.fn(),
+    getSessionState: vi.fn(),
     prompt: vi.fn(),
-    clearSession: vi.fn(),
+    newSession: vi.fn(),
+    abortSession: vi.fn(),
+    setThinkingLevel: vi.fn(),
   },
 }));
 
 vi.mock('@/services/event-stream', () => ({
-  subscribeEvents: vi.fn((onEvent: (event: HubEvent) => void, onError?: (error: Error) => void) => {
-    captured.onEvent = onEvent;
-    captured.onError = onError ?? null;
-    return () => {
-      captured.onEvent = null;
-      captured.onError = null;
-    };
-  }),
+  subscribeEvents: vi.fn(
+    (
+      onEvent: (event: AgentStreamEvent) => void,
+      onError?: (error: Error) => void
+    ) => {
+      captured.onEvent = onEvent;
+      captured.onError = onError ?? null;
+      return () => {
+        captured.onEvent = null;
+        captured.onError = null;
+      };
+    }
+  ),
 }));
 
 const captured = vi.hoisted(() => ({
-  onEvent: null as null | ((event: HubEvent) => void),
+  onEvent: null as null | ((event: AgentStreamEvent) => void),
   onError: null as null | ((error: Error) => void),
 }));
 
 import { api } from '@/services/api-client';
 
-const userMessage = (id: string, text: string): ChatMessage => ({ id, role: 'user', text });
-const assistantMessage = (id: string, text: string): ChatMessage => ({
-  id,
-  role: 'assistant',
-  text,
-});
+const sessionState: AgentSessionState = {
+  isRunning: false,
+  thinkingLevel: 'medium',
+  availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+};
+
+/**
+ * 构造完整的 Pi 助手消息。
+ *
+ * @param text - 助手文本
+ * @param timestamp - 时间戳
+ * @param stopReason - Pi 结束原因
+ * @returns 结构化助手消息
+ */
+function assistantMessage(
+  text: string,
+  timestamp = 2,
+  stopReason: 'stop' | 'aborted' = 'stop'
+): AssistantChatMessage {
+  return {
+    role: 'assistant',
+    content: text ? [{ type: 'text', text }] : [],
+    api: 'anthropic-messages',
+    provider: 'anthropic',
+    model: 'claude-a',
+    usage: {
+      input: 1,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 3,
+      cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+    },
+    stopReason,
+    timestamp,
+  };
+}
+
+/** 构造最小 AgentSessionState 副本。 */
+function stateCopy(overrides: Partial<AgentSessionState> = {}): AgentSessionState {
+  return { ...sessionState, ...overrides };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   captured.onEvent = null;
   captured.onError = null;
   vi.mocked(api.getMessages).mockResolvedValue([]);
+  vi.mocked(api.getSessionState).mockResolvedValue(stateCopy());
   vi.mocked(api.prompt).mockResolvedValue(undefined);
-  vi.mocked(api.clearSession).mockResolvedValue(undefined);
+  vi.mocked(api.newSession).mockResolvedValue(undefined);
+  vi.mocked(api.abortSession).mockResolvedValue(undefined);
+  vi.mocked(api.setThinkingLevel).mockResolvedValue(stateCopy({ thinkingLevel: 'high' }));
 });
 
 describe('chatReducer', () => {
-  it('初始状态:空列表、无流式、无错误', () => {
-    expect(initialState).toEqual({
-      messages: [],
-      pending: '',
-      streaming: false,
-      error: null,
-      sending: false,
-    });
+  it('初始状态包含结构化消息和 Pi 会话状态', () => {
+    expect(initialState.messages).toEqual([]);
+    expect(initialState.activeAssistant).toBeNull();
+    expect(initialState.loading).toBe(true);
+    expect(initialState.retries).toEqual([]);
   });
 
-  it('history_loaded 装载历史消息', () => {
-    const history = [userMessage('u1', '旧消息')];
-    expect(
-      chatReducer(initialState, { type: 'history_loaded', messages: history }).messages
-    ).toEqual(history);
-  });
-
-  it('hub_event:user_message 追加到列表', () => {
-    const state = chatReducer(initialState, {
-      type: 'hub_event',
-      event: { type: 'user_message', message: userMessage('u1', '你好') },
-    });
-    expect(state.messages).toEqual([userMessage('u1', '你好')]);
-  });
-
-  it('hub_event:流式三连 — start 清空占位、delta 累积、end 定稿', () => {
-    let state = chatReducer(
-      { ...initialState, error: { message: '旧错误', retryable: true } },
-      { type: 'hub_event', event: { type: 'assistant_message_start', messageId: 'a1' } }
-    );
-    expect(state.streaming).toBe(true);
-    expect(state.pending).toBe('');
-    // start 清掉旧错误
-    expect(state.error).toBeNull();
-
-    state = chatReducer(state, {
-      type: 'hub_event',
-      event: { type: 'assistant_text_delta', messageId: 'a1', delta: '你' },
+  it('message_start/update/end 完整归并文本增量', () => {
+    const start = assistantMessage('', 2);
+    let state = chatReducer(initialState, {
+      type: 'pi_event',
+      event: { type: 'message_start', message: start },
     });
     state = chatReducer(state, {
-      type: 'hub_event',
-      event: { type: 'assistant_text_delta', messageId: 'a1', delta: '好' },
+      type: 'pi_event',
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_start', contentIndex: 0 },
+      },
     });
-    expect(state.pending).toBe('你好');
-
     state = chatReducer(state, {
-      type: 'hub_event',
-      event: { type: 'assistant_message_end', message: assistantMessage('a1', '你好') },
+      type: 'pi_event',
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '你好' },
+      },
     });
-    expect(state.streaming).toBe(false);
-    expect(state.pending).toBe('');
-    expect(state.messages).toEqual([assistantMessage('a1', '你好')]);
+    expect(state.activeAssistant?.content).toEqual([{ type: 'text', text: '你好' }]);
+
+    const final = assistantMessage('你好', 2);
+    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: final } });
+    expect(state.activeAssistant).toBeNull();
+    expect(state.messages).toEqual([final]);
   });
 
-  it('hub_event:session_cleared 清空消息并复位流式', () => {
-    const before = chatReducer(initialState, {
-      type: 'hub_event',
-      event: { type: 'assistant_message_start', messageId: 'a1' },
+  it('thinking 和工具事件保留结构化内容并按 toolCallId 合并结果', () => {
+    const start = assistantMessage('', 2);
+    let state = chatReducer(initialState, {
+      type: 'pi_event',
+      event: { type: 'message_start', message: start },
     });
-    const state = chatReducer(
-      { ...before, messages: [userMessage('u1', '你好')], pending: '你' },
-      { type: 'hub_event', event: { type: 'session_cleared' } }
-    );
-    expect(state.messages).toEqual([]);
-    expect(state.streaming).toBe(false);
-    expect(state.pending).toBe('');
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 },
+      },
+    });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: {
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'thinking_delta',
+          contentIndex: 0,
+          delta: '先分析',
+        },
+      },
+    });
+    expect(state.activeAssistant?.content).toEqual([{ type: 'thinking', thinking: '先分析' }]);
+
+    const toolCall = {
+      type: 'toolCall' as const,
+      id: 'call-1',
+      name: 'read',
+      arguments: { path: 'README.md' },
+    };
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: {
+        type: 'tool_execution_start',
+        toolCallId: 'call-1',
+        toolName: 'read',
+        args: { path: 'README.md' },
+      },
+    });
+    expect(state.toolRuns['call-1']?.status).toBe('running');
+    const final = { ...assistantMessage('', 2), content: [toolCall] };
+    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: final } });
+    const result: ChatMessage = {
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      toolName: 'read',
+      content: [{ type: 'text', text: '内容' }],
+      details: {},
+      isError: false,
+      timestamp: 3,
+    };
+    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: result } });
+    expect(state.toolRuns['call-1']).toMatchObject({ status: 'success', result });
+    expect(state.messages).toEqual([final, result]);
   });
 
-  it('hub_event:error 记录错误与可重试标记', () => {
-    const state = chatReducer(initialState, {
-      type: 'hub_event',
-      event: { type: 'error', message: '模型响应失败', retryable: true },
+  it('保留重试记录并在压缩完成后显示状态', () => {
+    let state = chatReducer(initialState, {
+      type: 'pi_event',
+      receivedAt: 1000,
+      event: {
+        type: 'auto_retry_start',
+        attempt: 1,
+        maxAttempts: 2,
+        delayMs: 5000,
+        errorMessage: '限流',
+      },
     });
-    expect(state.error).toEqual({ message: '模型响应失败', retryable: true });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: { type: 'auto_retry_end', success: true, attempt: 1 },
+    });
+    expect(state.retries[0]).toMatchObject({ status: 'success', errorMessage: '限流' });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: { type: 'compaction_start', reason: 'threshold' },
+    });
+    expect(state.compaction).toEqual({ status: 'running', reason: 'threshold' });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: {
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: {
+          summary: '摘要',
+          firstKeptEntryId: 'entry-1',
+          tokensBefore: 100,
+          estimatedTokensAfter: 20,
+        },
+        aborted: false,
+        willRetry: false,
+      },
+    });
+    expect(state.compaction).toEqual({ status: 'success', reason: 'threshold' });
   });
 
-  it('send_started 置发送中并清错误;send_finished 复位', () => {
-    const withError = chatReducer(initialState, {
-      type: 'hub_event',
-      event: { type: 'error', message: 'x', retryable: true },
-    });
-    const started = chatReducer(withError, { type: 'send_started' });
-    expect(started.sending).toBe(true);
-    expect(started.error).toBeNull();
-
-    const finished = chatReducer(started, { type: 'send_finished' });
-    expect(finished.sending).toBe(false);
+  it('中止的回复保留 aborted 结构化消息', () => {
+    const message = assistantMessage('部分内容', 2, 'aborted');
+    const state = chatReducer(initialState, { type: 'pi_event', event: { type: 'message_end', message } });
+    expect(state.messages[0]).toMatchObject({ stopReason: 'aborted' });
   });
 
-  it('send_failed 复位发送中并记录可重试错误', () => {
-    const state = chatReducer(
-      { ...initialState, sending: true },
-      { type: 'send_failed', message: '请求失败' }
-    );
-    expect(state.sending).toBe(false);
-    expect(state.error).toEqual({ message: '请求失败', retryable: true });
+  it('Pi 原生增量转换不会把累计 partial 带入客户端事件', () => {
+    const message = assistantMessage('', 2);
+    const update = {
+      type: 'text_delta' as const,
+      contentIndex: 0,
+      delta: '你',
+    };
+    expect(applyAssistantUpdate(message, update).content).toEqual([{ type: 'text', text: '你' }]);
   });
 });
 
 describe('useChatSession', () => {
-  it('先拉历史、后订阅事件(事件订阅在历史落地之后)', async () => {
-    let resolveHistory!: (messages: ChatMessage[]) => void;
-    vi.mocked(api.getMessages).mockReturnValue(
-      new Promise((resolve) => (resolveHistory = resolve))
-    );
-
-    renderHook(() => useChatSession());
-
-    // 历史未返回时不允许订阅:否则 history_loaded 会覆盖已到事件
-    expect(captured.onEvent).toBeNull();
-
-    await act(async () => {
-      resolveHistory([userMessage('u1', '旧消息')]);
-    });
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-  });
-
-  it('历史加载失败按空历史处理,事件流照常工作', async () => {
-    vi.mocked(api.getMessages).mockRejectedValue(new Error('服务不可用'));
-    renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-  });
-
-  it('send 调用 api.prompt', async () => {
+  it('历史和状态加载后再订阅 Pi SSE', async () => {
     const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    await act(async () => {
-      await result.current.send('你好');
-    });
-    expect(api.prompt).toHaveBeenCalledWith('你好');
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+    expect(result.current.state.loading).toBe(false);
   });
 
-  it('send 失败后 error 可重试', async () => {
+  it('发送失败后保留可重试错误', async () => {
     vi.mocked(api.prompt).mockRejectedValue(new Error('请求失败'));
     const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    await act(async () => {
-      await result.current.send('你好');
-    });
-    expect(result.current.error).toEqual({ message: '请求失败', retryable: true });
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+    await act(async () => result.current.send('你好'));
+    expect(result.current.state.error).toEqual({ message: '请求失败', retryable: true });
   });
 
-  it('流式输出中 send 直接忽略(守卫:同一时刻只允许一条在途消息)', async () => {
+  it('运行中拒绝并发发送，stop 调用 Pi abort', async () => {
     const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    act(() => {
-      captured.onEvent!({ type: 'assistant_message_start', messageId: 'a1' });
-    });
-    await act(async () => {
-      await result.current.send('插队消息');
-    });
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+    act(() => captured.onEvent!({ type: 'agent_start' }));
+    await act(async () => result.current.send('插队消息'));
     expect(api.prompt).not.toHaveBeenCalled();
+    await act(async () => result.current.abort());
+    expect(api.abortSession).toHaveBeenCalledTimes(1);
   });
 
-  it('retry 重发最后一条用户消息', async () => {
+  it('重试最后一条用户消息，并使用 Pi 原生新会话和思考等级', async () => {
     const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    act(() => {
-      captured.onEvent!({ type: 'user_message', message: userMessage('u1', '你好') });
-    });
-    act(() => {
-      result.current.retry();
-    });
-    await waitFor(() => {
-      expect(api.prompt).toHaveBeenCalledWith('你好');
-    });
-  });
-
-  it('事件流驱动状态:start/delta/end 完整走一遍', async () => {
-    const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    act(() => {
-      captured.onEvent!({ type: 'assistant_message_start', messageId: 'a1' });
-      captured.onEvent!({ type: 'assistant_text_delta', messageId: 'a1', delta: '你' });
-      captured.onEvent!({ type: 'assistant_message_end', message: assistantMessage('a1', '你') });
-    });
-    expect(result.current.messages).toEqual([assistantMessage('a1', '你')]);
-    expect(result.current.streaming).toBe(false);
-  });
-
-  it('clear 调用 api.clearSession', async () => {
-    const { result } = renderHook(() => useChatSession());
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
-    act(() => {
-      result.current.clear();
-    });
-    expect(api.clearSession).toHaveBeenCalled();
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+    const message: ChatMessage = { role: 'user', content: '你好', timestamp: 1 };
+    act(() => captured.onEvent!({ type: 'message_end', message }));
+    act(() => result.current.retry());
+    await waitFor(() => expect(api.prompt).toHaveBeenCalledWith('你好'));
+    await act(async () => result.current.setThinkingLevel('high'));
+    expect(api.setThinkingLevel).toHaveBeenCalledWith('high');
+    await act(async () => result.current.newSession());
+    expect(api.newSession).toHaveBeenCalledTimes(1);
+    expect(result.current.state.messages).toEqual([]);
   });
 });

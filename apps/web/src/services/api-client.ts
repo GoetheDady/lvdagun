@@ -2,11 +2,13 @@
 import {
   API_PATHS,
   TOKEN_HEADER,
+  type AgentSessionState,
   type ChatMessage,
   type ModelConfig,
   type ModelInfo,
   type ProviderInfo,
   type TestConnectionResult,
+  type ThinkingLevel,
 } from '@lvdagun/protocol';
 
 import { getToken } from './access-token';
@@ -63,6 +65,8 @@ export const api = {
 
   getMessages: (): Promise<ChatMessage[]> => request(API_PATHS.messages),
 
+  getSessionState: (): Promise<AgentSessionState> => request(API_PATHS.sessionState),
+
   prompt: (text: string): Promise<void> =>
     request(API_PATHS.prompt, {
       method: 'POST',
@@ -70,5 +74,14 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  clearSession: (): Promise<void> => request(API_PATHS.clearSession, { method: 'POST' }),
+  newSession: (): Promise<void> => request(API_PATHS.newSession, { method: 'POST' }),
+
+  abortSession: (): Promise<void> => request(API_PATHS.abortSession, { method: 'POST' }),
+
+  setThinkingLevel: (level: ThinkingLevel): Promise<AgentSessionState> =>
+    request(API_PATHS.thinkingLevel, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level }),
+    }),
 };

@@ -2,6 +2,7 @@
  * @file 渲染入口:读取一次性 token 后挂载 React 应用。
  */
 import './styles/main.css';
+import 'streamdown/styles.css';
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

@@ -18,6 +18,9 @@ export const API_PATHS = {
   models: '/api/models',
   messages: '/api/messages',
   prompt: '/api/prompt',
-  clearSession: '/api/session/clear',
+  sessionState: '/api/session',
+  newSession: '/api/session/new',
+  abortSession: '/api/session/abort',
+  thinkingLevel: '/api/session/thinking-level',
   events: '/api/events',
 } as const;

@@ -1,43 +1,87 @@
 import type {
+  AgentSessionState,
+  AgentStreamEvent,
   ChatMessage,
-  HubEvent,
   ModelConfig,
   ModelInfo,
   ProviderInfo,
   TestConnectionResult,
+  ThinkingLevel,
 } from '@lvdagun/protocol';
 
-/** Hub 会话：本地服务与 Agent Hub 之间的契约 */
+/** Agent 正在运行，当前操作不能与之并发 */
+export class AgentBusyError extends Error {
+  /**
+   * 创建 Agent 忙碌错误。
+   */
+  constructor() {
+    super('Agent 正在运行');
+    this.name = 'AgentBusyError';
+  }
+}
+
+/** 本地服务与 Pi Agent 会话之间的能力契约 */
 export interface HubSession {
   /**
-   * 发送用户消息并处理完整回复。
+   * 接受一条用户提示。
    *
-   * @param text - 用户消息文本
-   * @returns 回复处理完成后解决的 Promise
+   * @param text - 用户提示文本
+   * @returns Pi 完成前置校验并接受提示后解决的 Promise
+   * @throws Agent 正在运行或 Pi 前置校验失败
    */
   prompt(text: string): Promise<void>;
 
   /**
-   * 订阅 Hub 事件流。
+   * 订阅 Pi JSON 会话事件。
    *
    * @param listener - 事件回调
    * @returns 退订函数
    */
-  subscribe(listener: (event: HubEvent) => void): () => void;
+  subscribe(listener: (event: AgentStreamEvent) => void): () => void;
 
   /**
-   * 读取当前会话的消息历史。
+   * 读取 Pi 当前会话的全部结构化消息。
    *
    * @returns 消息历史副本
    */
   getMessages(): ChatMessage[];
 
   /**
-   * 释放会话资源。
+   * 读取当前 Agent 运行与思考等级状态。
    *
-   * @returns 无返回值
+   * @returns 当前会话状态
    */
-  dispose(): void;
+  getState(): AgentSessionState;
+
+  /**
+   * 在 Agent 空闲时创建 Pi 新会话。
+   *
+   * @returns 新会话完成绑定后解决的 Promise
+   * @throws Agent 正在运行
+   */
+  newSession(): Promise<void>;
+
+  /**
+   * 中止当前 Agent 运行并等待其稳定。
+   *
+   * @returns Agent 完全稳定后解决的 Promise
+   */
+  abort(): Promise<void>;
+
+  /**
+   * 设置 Pi 思考等级。
+   *
+   * @param level - 请求的思考等级，Pi 会按当前模型能力收窄
+   * @returns 设置后的当前会话状态
+   */
+  setThinkingLevel(level: ThinkingLevel): Promise<AgentSessionState>;
+
+  /**
+   * 释放 Pi Runtime 与事件订阅。
+   *
+   * @returns 资源释放完成后解决的 Promise
+   */
+  dispose(): Promise<void>;
 }
 
 /** Agent Hub 对本地服务提供的能力 */

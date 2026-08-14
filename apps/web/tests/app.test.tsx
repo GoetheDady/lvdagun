@@ -13,8 +13,11 @@ vi.mock('@/services/api-client', () => ({
     listProviders: vi.fn(),
     listModels: vi.fn(),
     getMessages: vi.fn(),
+    getSessionState: vi.fn(),
     prompt: vi.fn(),
-    clearSession: vi.fn(),
+    newSession: vi.fn(),
+    abortSession: vi.fn(),
+    setThinkingLevel: vi.fn(),
   },
 }));
 
@@ -32,6 +35,11 @@ function renderApp(initialPath = '/'): void {
 
 beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
+  vi.mocked(api.getSessionState).mockResolvedValue({
+    isRunning: false,
+    thinkingLevel: 'medium',
+    availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+  });
   vi.mocked(api.listProviders).mockResolvedValue([]);
 });
 

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 import type { ConfigStore } from '../config/config-store';
+import { AgentBusyError } from '../hub/hub';
 import type { Hub } from '../hub/hub';
 import { NotConfiguredError, createSessionManager } from '../sessions/session-manager';
 import { createEventStream } from './event-stream';
@@ -56,7 +57,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // Express 通过四参数签名识别错误中间件，因此保留未使用的 next 参数。
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (error instanceof NotConfiguredError) {
+    if (error instanceof NotConfiguredError || error instanceof AgentBusyError) {
       res.status(409).json({ error: error.message });
       return;
     }

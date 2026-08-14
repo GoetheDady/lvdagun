@@ -3,7 +3,7 @@
  *
  * 本包是数据结构、事件格式与传输约定的唯一来源。
  */
-export type { ChatMessage, HubEvent } from './chat.ts';
+export type { AgentSessionState, AgentStreamEvent, ChatMessage, ThinkingLevel } from './chat.ts';
 export type { ModelConfig, ModelInfo, ProviderInfo, TestConnectionResult } from './model.ts';
 export {
   API_PATHS,

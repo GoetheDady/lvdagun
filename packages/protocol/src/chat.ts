@@ -1,20 +1,20 @@
-/** 对话消息 */
-export interface ChatMessage {
-  /** 消息唯一 id（在边界处生成，Pi 消息无 id） */
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
+import type { AgentMessage, ThinkingLevel } from '@earendil-works/pi-agent-core';
+import type { JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
+
+/** SSE 传输的 Pi JSON 会话事件 */
+export type AgentStreamEvent = JsonAgentSessionEvent;
+
+/** Pi 会话中的结构化消息 */
+export type ChatMessage = AgentMessage;
+
+/** Pi 当前会话的运行与思考等级状态 */
+export interface AgentSessionState {
+  /** Agent 是否仍在运行、重试、压缩或处理排队任务 */
+  isRunning: boolean;
+  /** 当前实际思考等级 */
+  thinkingLevel: ThinkingLevel;
+  /** 当前模型支持的思考等级 */
+  availableThinkingLevels: ThinkingLevel[];
 }
 
-/**
- * Hub 推送给客户端的事件（SSE 流）。
- *
- * 事件语义与 Pi 会话事件对应，但不暴露 Pi 内部类型。
- */
-export type HubEvent =
-  | { type: 'user_message'; message: ChatMessage }
-  | { type: 'assistant_message_start'; messageId: string }
-  | { type: 'assistant_text_delta'; messageId: string; delta: string }
-  | { type: 'assistant_message_end'; message: ChatMessage }
-  | { type: 'session_cleared' }
-  | { type: 'error'; message: string; retryable: boolean };
+export type { ThinkingLevel };

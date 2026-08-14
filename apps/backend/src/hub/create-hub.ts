@@ -8,10 +8,12 @@ import { join } from 'node:path';
 
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import {
-  createAgentSession,
-  DefaultResourceLoader,
+  type CreateAgentSessionRuntimeFactory,
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
   ModelRuntime,
-  SessionManager,
+  SessionManager as PiSessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
 import type { ModelInfo, ProviderInfo, TestConnectionResult } from '@lvdagun/protocol';
@@ -28,6 +30,7 @@ const INFRA_PROVIDERS = new Set([
 ]);
 
 const DEFAULT_SYSTEM_PROMPT = '你是驴打滚,运行在用户电脑上的个人 AI 管家。回答简洁、直接、用中文。';
+const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
 
 /**
  * 创建基于 Pi SDK 的 Agent Hub。
@@ -124,28 +127,50 @@ export function createHub(options: { dataDir: string }): Hub {
         throw new Error(`未找到模型:${config.provider}/${config.modelId}`);
       }
 
-      // 编码代理资源会干扰个人管家，V0 关闭上下文发现和全部工具。
-      const loader = new DefaultResourceLoader({
-        cwd: homedir(),
-        agentDir: dataDir,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT,
-        noSkills: true,
-        noContextFiles: true,
-      });
-      await loader.reload();
+      const cwd = homedir();
+      const settingsManager = SettingsManager.create(cwd, dataDir, { projectTrusted: true });
 
-      const { session } = await createAgentSession({
-        cwd: homedir(),
+      /**
+       * 为初始会话和后续新会话创建一致的 Pi Runtime。
+       *
+       * @param runtimeOptions - Pi Runtime 请求的工作目录、会话存储和启动事件
+       * @returns 完整的 Pi AgentSession Runtime 结果
+       */
+      const createRuntime: CreateAgentSessionRuntimeFactory = async (runtimeOptions) => {
+        const services = await createAgentSessionServices({
+          cwd: runtimeOptions.cwd,
+          agentDir: dataDir,
+          modelRuntime: runtime,
+          settingsManager,
+          resourceLoaderOptions: {
+            systemPrompt: DEFAULT_SYSTEM_PROMPT,
+            noExtensions: true,
+            noSkills: true,
+            noPromptTemplates: true,
+            noThemes: true,
+            noContextFiles: true,
+          },
+        });
+        return {
+          ...(await createAgentSessionFromServices({
+            services,
+            sessionManager: runtimeOptions.sessionManager,
+            sessionStartEvent: runtimeOptions.sessionStartEvent,
+            model,
+            tools: DEFAULT_TOOLS,
+          })),
+          services,
+          diagnostics: services.diagnostics,
+        };
+      };
+
+      const agentRuntime = await createAgentSessionRuntime(createRuntime, {
+        cwd,
         agentDir: dataDir,
-        model,
-        modelRuntime: runtime,
-        resourceLoader: loader,
-        noTools: 'all',
-        sessionManager: SessionManager.inMemory(),
-        settingsManager: SettingsManager.inMemory(),
+        sessionManager: PiSessionManager.inMemory(cwd),
       });
 
-      return new PiHubSession(session);
+      return new PiHubSession(agentRuntime);
     },
   };
 }

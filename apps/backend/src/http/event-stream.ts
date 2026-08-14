@@ -1,6 +1,6 @@
 import type { RequestHandler, Response } from 'express';
 
-import type { HubEvent } from '@lvdagun/protocol';
+import type { AgentStreamEvent } from '@lvdagun/protocol';
 
 /** SSE 客户端集合及其事件广播能力 */
 export interface EventStream {
@@ -10,7 +10,7 @@ export interface EventStream {
    * @param event - 共享协议事件
    * @returns 无返回值
    */
-  broadcast(event: HubEvent): void;
+  broadcast(event: AgentStreamEvent): void;
 
   /** 接受并维护 SSE 连接的 Express 处理器 */
   handler: RequestHandler;
@@ -25,7 +25,7 @@ export function createEventStream(): EventStream {
   const clients = new Set<Response>();
 
   return {
-    broadcast(event: HubEvent): void {
+    broadcast(event: AgentStreamEvent): void {
       const frame = `data: ${JSON.stringify(event)}\n\n`;
       for (const client of clients) {
         client.write(frame);

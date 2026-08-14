@@ -1,4 +1,4 @@
-import { API_PATHS, TOKEN_HEADER, type HubEvent } from '@lvdagun/protocol';
+import { API_PATHS, TOKEN_HEADER, type AgentStreamEvent } from '@lvdagun/protocol';
 
 import { getToken } from './access-token';
 
@@ -10,7 +10,7 @@ import { getToken } from './access-token';
  * @returns 退订函数
  */
 export function subscribeEvents(
-  onEvent: (event: HubEvent) => void,
+  onEvent: (event: AgentStreamEvent) => void,
   onError?: (error: Error) => void
 ): () => void {
   const token = getToken();
@@ -36,7 +36,7 @@ export function subscribeEvents(
 async function readEventStream(
   token: string,
   controller: AbortController,
-  onEvent: (event: HubEvent) => void,
+  onEvent: (event: AgentStreamEvent) => void,
   onError?: (error: Error) => void
 ): Promise<void> {
   try {
@@ -62,7 +62,7 @@ async function readEventStream(
         buffer = buffer.slice(separator + 2);
         const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
         if (dataLine) {
-          onEvent(JSON.parse(dataLine.slice(6)) as HubEvent);
+          onEvent(JSON.parse(dataLine.slice(6)) as AgentStreamEvent);
         }
       }
     }

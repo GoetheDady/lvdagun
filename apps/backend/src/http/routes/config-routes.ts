@@ -32,7 +32,7 @@ export function registerConfigRoutes(
       return;
     }
     await configStore.save(config);
-    sessionManager.invalidate();
+    await sessionManager.invalidate();
     res.status(204).end();
   });
 }

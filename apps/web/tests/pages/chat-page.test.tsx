@@ -3,38 +3,60 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HubEvent } from '@lvdagun/protocol';
+import type { AgentSessionState, AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
 
 import ChatPage from '@/pages/chat-page';
 import { api } from '@/services/api-client';
 
-/**
- * DOM 冒烟:只测 UI 专属行为(渲染、输入交互、确认弹窗)。
- * 会话语义(事件翻译、发送/重试/清空、竞态)全部在 tests/chat-session.test.ts 直测。
- */
-const captured = vi.hoisted(() => ({ onEvent: null as null | ((event: HubEvent) => void) }));
+const captured = vi.hoisted(() => ({
+  onEvent: null as null | ((event: AgentStreamEvent) => void),
+}));
 
 vi.mock('@/services/api-client', () => ({
   api: {
-    getConfig: vi.fn(),
-    saveConfig: vi.fn(),
-    testConnection: vi.fn(),
-    listProviders: vi.fn(),
-    listModels: vi.fn(),
     getMessages: vi.fn(),
+    getSessionState: vi.fn(),
     prompt: vi.fn(),
-    clearSession: vi.fn(),
+    newSession: vi.fn(),
+    abortSession: vi.fn(),
+    setThinkingLevel: vi.fn(),
   },
 }));
 
 vi.mock('@/services/event-stream', () => ({
-  subscribeEvents: vi.fn((onEvent: (event: HubEvent) => void) => {
+  subscribeEvents: vi.fn((onEvent: (event: AgentStreamEvent) => void) => {
     captured.onEvent = onEvent;
     return () => {
       captured.onEvent = null;
     };
   }),
 }));
+
+/** 构造页面使用的 Pi 状态。 */
+const sessionState: AgentSessionState = {
+  isRunning: false,
+  thinkingLevel: 'medium',
+  availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+};
+
+/** 构造页面测试用助手消息。 */
+const assistantMessage: ChatMessage = {
+  role: 'assistant',
+  content: [{ type: 'text', text: '你好呀' }],
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  model: 'claude-a',
+  usage: {
+    input: 1,
+    output: 2,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 3,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason: 'stop',
+  timestamp: 2,
+};
 
 function renderChatPage(): ReturnType<typeof render> {
   return render(
@@ -48,72 +70,93 @@ beforeEach(() => {
   vi.clearAllMocks();
   captured.onEvent = null;
   vi.mocked(api.getMessages).mockResolvedValue([]);
+  vi.mocked(api.getSessionState).mockResolvedValue(sessionState);
   vi.mocked(api.prompt).mockResolvedValue(undefined);
-  vi.mocked(api.clearSession).mockResolvedValue(undefined);
+  vi.mocked(api.newSession).mockResolvedValue(undefined);
+  vi.mocked(api.abortSession).mockResolvedValue(undefined);
+  vi.mocked(api.setThinkingLevel).mockResolvedValue({ ...sessionState, thinkingLevel: 'high' });
 });
 
-describe('ChatPage DOM 冒烟', () => {
-  it('渲染:历史气泡、代码块、空态示例建议点击填入', async () => {
+describe('ChatPage', () => {
+  it('渲染结构化历史和 Markdown 文本', async () => {
     vi.mocked(api.getMessages).mockResolvedValue([
-      { id: 'u1', role: 'user', text: '你好' },
-      { id: 'a1', role: 'assistant', text: '如下:\n```\nconsole.log(1)\n```' },
+      { role: 'user', content: '你好', timestamp: 1 },
+      assistantMessage,
     ]);
     renderChatPage();
-
-    // 历史气泡
-    await screen.findByText('你好');
-    // 代码块:深色等宽块
-    const code = screen.getByText('console.log(1)');
-    expect(code.tagName).toBe('PRE');
-    expect(code.className).toContain('font-mono');
+    expect(await screen.findByText('你好')).toBeInTheDocument();
+    expect(await screen.findByText('你好呀')).toBeInTheDocument();
+    expect(screen.getByText(/anthropic \/ claude-a/)).toBeInTheDocument();
   });
 
-  it('渲染:空态示例建议点击填入输入框', async () => {
+  it('空态示例建议可填入输入框', async () => {
     renderChatPage();
-    const suggestion = screen.getByRole('button', { name: '帮我写一个快速排序' });
-    await userEvent.click(suggestion);
-    expect(screen.getByPlaceholderText(/输入消息/)).toHaveValue('帮我写一个快速排序');
+    await userEvent.click(
+      await screen.findByRole('button', { name: '总结今天的重要新闻' })
+    );
+    expect(screen.getByPlaceholderText('输入消息')).toHaveValue('总结今天的重要新闻');
   });
 
-  it('发消息:调用 prompt,输入框清空', async () => {
+  it('发送调用 Pi prompt，停止调用 Pi abort', async () => {
     renderChatPage();
-    const input = screen.getByPlaceholderText(/输入消息/);
+    const input = screen.getByPlaceholderText('输入消息');
+    await waitFor(() => expect(input).toBeEnabled());
     await userEvent.type(input, '今天天气如何');
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    await waitFor(() => {
-      expect(api.prompt).toHaveBeenCalledWith('今天天气如何');
-    });
+    await waitFor(() => expect(api.prompt).toHaveBeenCalledWith('今天天气如何'));
     expect(input).toHaveValue('');
+
+    act(() => captured.onEvent!({ type: 'agent_start' }));
+    await userEvent.click(screen.getByRole('button', { name: '停止' }));
+    expect(api.abortSession).toHaveBeenCalledTimes(1);
   });
 
-  it('清空会话:确认弹窗放行才调用 clearSession', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('新对话使用确认对话框，确认后只调用 Pi newSession', async () => {
     renderChatPage();
-    await userEvent.click(screen.getByRole('button', { name: /清空会话/ }));
-    await waitFor(() => {
-      expect(api.clearSession).toHaveBeenCalled();
-    });
+    await userEvent.click(screen.getByRole('button', { name: /新对话/ }));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.getByText('开始新对话？')).toBeInTheDocument();
+    expect(api.newSession).not.toHaveBeenCalled();
 
-    vi.mocked(window.confirm).mockReturnValue(false);
-    await userEvent.click(screen.getByRole('button', { name: /清空会话/ }));
-    expect(api.clearSession).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(api.newSession).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: /新对话/ }));
+    await userEvent.click(screen.getByRole('button', { name: '开始新对话' }));
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: /新对话/ })).toBeEnabled();
+
+    act(() => captured.onEvent!({ type: 'agent_start' }));
+    expect(screen.getByRole('button', { name: /新对话/ })).toBeDisabled();
   });
 
-  it('SSE 事件渲染:用户消息与流式文本经事件流呈现', async () => {
+  it('思考等级使用 Pi 提供的可用选项', async () => {
     renderChatPage();
-    await waitFor(() => {
-      expect(captured.onEvent).not.toBeNull();
-    });
+    const selector = await screen.findByRole('combobox', { name: '思考等级' });
+    await userEvent.selectOptions(selector, 'high');
+    expect(api.setThinkingLevel).toHaveBeenCalledWith('high');
+  });
+
+  it('SSE 结构化消息事件会进入对话记录', async () => {
+    renderChatPage();
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
     act(() => {
       captured.onEvent!({
-        type: 'user_message',
-        message: { id: 'u1', role: 'user', text: '你好' },
+        type: 'message_end',
+        message: { role: 'user', content: '你好', timestamp: 1 },
       });
-      captured.onEvent!({ type: 'assistant_message_start', messageId: 'a1' });
-      captured.onEvent!({ type: 'assistant_text_delta', messageId: 'a1', delta: '嗨' });
+      captured.onEvent!({ type: 'message_start', message: { ...assistantMessage, content: [] } });
+      captured.onEvent!({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_start', contentIndex: 0 },
+      });
+      captured.onEvent!({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '嗨' },
+      });
     });
-    expect(screen.getAllByText('你好')).toHaveLength(1);
+    expect(screen.getByText('你好')).toBeInTheDocument();
     expect(screen.getByText('嗨')).toBeInTheDocument();
   });
 });

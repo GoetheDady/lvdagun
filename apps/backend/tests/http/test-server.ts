@@ -3,7 +3,14 @@ import type { AddressInfo } from 'node:net';
 import type { Express } from 'express';
 import { expect, vi } from 'vitest';
 
-import type { ChatMessage, HubEvent, ModelConfig, TestConnectionResult } from '@lvdagun/protocol';
+import type {
+  AgentSessionState,
+  AgentStreamEvent,
+  ChatMessage,
+  ModelConfig,
+  TestConnectionResult,
+  ThinkingLevel,
+} from '@lvdagun/protocol';
 
 import type { FileConfigStore } from '../../src/config/config-store';
 import type { Hub, HubSession } from '../../src/hub/hub';
@@ -17,34 +24,74 @@ export const validConfig: ModelConfig = {
   modelId: 'claude-a',
 };
 
-/** 测试用可控 Hub 会话 */
+/**
+ * 构造测试使用的 Pi 助手消息。
+ *
+ * @param text - 助手文本
+ * @param timestamp - 消息时间戳
+ * @param stopReason - Pi 结束原因
+ * @returns 完整助手消息
+ */
+export function assistantMessage(
+  text: string,
+  timestamp: number,
+  stopReason: 'pending' | 'stop' | 'aborted' = 'stop'
+): Extract<ChatMessage, { role: 'assistant' }> {
+  return {
+    role: 'assistant',
+    content: text ? [{ type: 'text', text }] : [],
+    api: 'anthropic-messages',
+    provider: 'anthropic',
+    model: 'claude-a',
+    usage: {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+    },
+    stopReason,
+    timestamp,
+  };
+}
+
+/** 测试用可控 Hub 会话。 */
 export class FakeSession implements HubSession {
   readonly promptTexts: string[] = [];
   readonly messages: ChatMessage[] = [];
   disposeCalls = 0;
-  private idCounter = 0;
-  private readonly listeners = new Set<(event: HubEvent) => void>();
+  newSessionCalls = 0;
+  abortCalls = 0;
+  isRunning = false;
+  thinkingLevel: ThinkingLevel = 'medium';
+  readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
+  private timestamp = 1;
+  private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
 
   /**
-   * 记录用户消息并发送 user_message 事件。
+   * 接受用户提示并发出 Pi 原生消息生命周期事件。
    *
    * @param text - 用户消息文本
-   * @returns 已解决的 Promise
+   * @returns 提示被接受后解决的 Promise
    */
   prompt = vi.fn(async (text: string): Promise<void> => {
     this.promptTexts.push(text);
-    const message: ChatMessage = { id: `u-${++this.idCounter}`, role: 'user', text };
+    this.isRunning = true;
+    const message: ChatMessage = { role: 'user', content: text, timestamp: this.timestamp++ };
     this.messages.push(message);
-    this.emit({ type: 'user_message', message });
+    this.emit({ type: 'agent_start' });
+    this.emit({ type: 'message_start', message });
+    this.emit({ type: 'message_end', message });
   });
 
   /**
-   * 订阅测试会话事件。
+   * 订阅测试会话的 Pi JSON 事件。
    *
    * @param listener - 事件回调
    * @returns 退订函数
    */
-  subscribe = (listener: (event: HubEvent) => void): (() => void) => {
+  subscribe = (listener: (event: AgentStreamEvent) => void): (() => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -58,30 +105,96 @@ export class FakeSession implements HubSession {
    */
   getMessages = (): ChatMessage[] => [...this.messages];
 
-  /** 记录会话释放次数 */
-  dispose = vi.fn((): void => {
+  /**
+   * 读取测试会话状态。
+   *
+   * @returns 当前运行状态和思考等级
+   */
+  getState = (): AgentSessionState => ({
+    isRunning: this.isRunning,
+    thinkingLevel: this.thinkingLevel,
+    availableThinkingLevels: [...this.availableThinkingLevels],
+  });
+
+  /**
+   * 创建一个空的新会话。
+   *
+   * @returns 操作完成后的 Promise
+   */
+  newSession = vi.fn(async (): Promise<void> => {
+    this.newSessionCalls += 1;
+    this.messages.splice(0);
+  });
+
+  /**
+   * 中止当前运行。
+   *
+   * @returns 操作完成后的 Promise
+   */
+  abort = vi.fn(async (): Promise<void> => {
+    this.abortCalls += 1;
+    this.isRunning = false;
+    this.emit({ type: 'agent_settled' });
+  });
+
+  /**
+   * 设置测试会话思考等级。
+   *
+   * @param level - 新思考等级
+   * @returns 更新后的会话状态
+   */
+  setThinkingLevel = vi.fn(async (level: ThinkingLevel): Promise<AgentSessionState> => {
+    this.thinkingLevel = level;
+    this.emit({ type: 'thinking_level_changed', level });
+    return this.getState();
+  });
+
+  /**
+   * 记录会话释放次数。
+   *
+   * @returns 操作完成后的 Promise
+   */
+  dispose = vi.fn(async (): Promise<void> => {
     this.disposeCalls += 1;
   });
 
   /**
-   * 模拟完整的 AI 流式回复。
+   * 模拟完整的 Pi 助手文本流。
    *
-   * @param text - AI 回复文本
+   * @param text - 助手回复文本
+   * @param stopReason - 最终结束原因
    * @returns 无返回值
    */
-  simulateAssistant(text: string): void {
-    const messageId = `a-${++this.idCounter}`;
-    this.emit({ type: 'assistant_message_start', messageId });
+  simulateAssistant(text: string, stopReason: 'stop' | 'aborted' = 'stop'): void {
+    const timestamp = this.timestamp++;
+    const startMessage = assistantMessage('', timestamp, 'pending');
+    this.emit({ type: 'message_start', message: startMessage });
+    this.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 0 } });
     for (const char of text) {
-      this.emit({ type: 'assistant_text_delta', messageId, delta: char });
+      this.emit({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: char },
+      });
     }
-    const message: ChatMessage = { id: messageId, role: 'assistant', text };
+    this.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: text },
+    });
+    const message = assistantMessage(text, timestamp, stopReason);
     this.messages.push(message);
-    this.emit({ type: 'assistant_message_end', message });
+    this.emit({ type: 'message_end', message });
+    this.isRunning = false;
+    this.emit({ type: 'agent_end', messages: [message], willRetry: false });
+    this.emit({ type: 'agent_settled' });
   }
 
-  /** 向测试订阅者发送事件 */
-  private emit(event: HubEvent): void {
+  /**
+   * 向测试订阅者发送 Pi JSON 事件。
+   *
+   * @param event - Pi JSON 会话事件
+   * @returns 无返回值
+   */
+  emit(event: AgentStreamEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
@@ -152,7 +265,7 @@ export async function startServer(
 export async function openEvents(
   baseUrl: string,
   token: string
-): Promise<{ nextEvent: (timeoutMs?: number) => Promise<HubEvent>; close: () => void }> {
+): Promise<{ nextEvent: (timeoutMs?: number) => Promise<AgentStreamEvent>; close: () => void }> {
   const response = await fetch(`${baseUrl}/api/events`, {
     headers: { 'x-lvdagun-token': token },
   });
@@ -164,7 +277,7 @@ export async function openEvents(
   let buffer = '';
 
   return {
-    async nextEvent(timeoutMs = 2000): Promise<HubEvent> {
+    async nextEvent(timeoutMs = 2000): Promise<AgentStreamEvent> {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         const separator = buffer.indexOf('\n\n');
@@ -173,7 +286,7 @@ export async function openEvents(
           buffer = buffer.slice(separator + 2);
           const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
           expect(dataLine).toBeDefined();
-          return JSON.parse(dataLine!.slice(6)) as HubEvent;
+          return JSON.parse(dataLine!.slice(6)) as AgentStreamEvent;
         }
         if (Date.now() > deadline) {
           throw new Error('等待 SSE 事件超时');
