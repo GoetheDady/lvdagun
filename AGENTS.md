@@ -31,6 +31,7 @@
 ## 目录结构
 
 - `backend/` — 本地服务(Express + Pi SDK);`web/` — 浏览器客户端(Vite + React)
+- 测试文件统一放各包的 `tests/` 目录(`backend/tests/`、`web/tests/`)
 - `.agents/skills/` — 项目内 AI 技能(来自 mattpocock/skills)
 
 ## Agent skills

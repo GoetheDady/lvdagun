@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { maskKey } from './mask';
+import { maskKey } from '@/lib/mask';
 
 describe('maskKey', () => {
   it('只露前 5 位与后 4 位', () => {

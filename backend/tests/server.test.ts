@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import type { Express } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FileConfigStore } from './config';
-import type { Hub, HubSession } from './hub';
-import type { ChatMessage, HubEvent, ModelConfig, TestConnectionResult } from './protocol';
-import { createServer } from './server';
+import { FileConfigStore } from '../src/config';
+import type { Hub, HubSession } from '../src/hub';
+import type { ChatMessage, HubEvent, ModelConfig, TestConnectionResult } from '../src/protocol';
+import { createServer } from '../src/server';
 
 const TOKEN = 'test-token';
 

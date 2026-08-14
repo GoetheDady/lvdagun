@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { HubEvent } from '@lvdagun/backend';
 
-import { api, getToken, initTokenFromUrl, subscribeEvents } from './api';
+import { api, getToken, initTokenFromUrl, subscribeEvents } from '@/lib/api';
 
 beforeEach(() => {
   localStorage.clear();

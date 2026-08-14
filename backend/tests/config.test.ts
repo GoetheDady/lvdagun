@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FileConfigStore, getOrCreateToken, parseModelConfig } from './config';
-import type { ModelConfig } from './protocol';
+import { FileConfigStore, getOrCreateToken, parseModelConfig } from '../src/config';
+import type { ModelConfig } from '../src/protocol';
 
 /** 每个用例独立的临时数据目录,绝不触碰真实 ~/.lvdagun */
 let dir: string;

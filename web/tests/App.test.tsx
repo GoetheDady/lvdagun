@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, it, vi } from 'vitest';
 
 import { api } from '@/lib/api';
-import App from './App';
+import App from '@/App';
 
 vi.mock('@/lib/api', () => ({
   api: {

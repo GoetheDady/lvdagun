@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HubEvent } from './protocol';
+import type { HubEvent } from '../src/protocol';
 
 /**
  * Pi SDK 模块级 mock:测试绝不触网、绝不创建真实运行时。
@@ -79,7 +79,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   };
 });
 
-import { createHub } from './hub';
+import { createHub } from '../src/hub';
 
 beforeEach(() => {
   pi.state.providers = [];
