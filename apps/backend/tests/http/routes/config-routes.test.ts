@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelConfig } from '@lvdagun/protocol';
 
 import { FileConfigStore } from '../../../src/config/config-store';
-import { makeFakeHub, startServer, TOKEN, validConfig } from '../test-server';
+import { makeFakeHub, startServer, validConfig } from '../test-server';
 
 let dir: string;
 
@@ -27,9 +27,7 @@ describe('配置接口', () => {
       new FileConfigStore(join(dir, 'config.json'))
     );
     try {
-      const response = await fetch(`${baseUrl}/api/config`, {
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
+      const response = await fetch(`${baseUrl}/api/config`);
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toBeNull();
     } finally {
@@ -44,14 +42,12 @@ describe('配置接口', () => {
     try {
       const put = await fetch(`${baseUrl}/api/config`, {
         method: 'PUT',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify(validConfig),
       });
       expect(put.status).toBe(204);
 
-      const get = await fetch(`${baseUrl}/api/config`, {
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
+      const get = await fetch(`${baseUrl}/api/config`);
       await expect(get.json()).resolves.toEqual(validConfig);
       expect(JSON.parse(await readFile(file, 'utf8')) as ModelConfig).toEqual(validConfig);
     } finally {
@@ -68,7 +64,7 @@ describe('配置接口', () => {
     try {
       const response = await fetch(`${baseUrl}/api/config`, {
         method: 'PUT',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ provider: '', apiKey: 'x', modelId: 'm' }),
       });
       expect(response.status).toBe(400);
@@ -78,14 +74,14 @@ describe('配置接口', () => {
   });
 
   it('配置变更后释放旧会话，下次对话按新配置重建', async () => {
-    const { hub, sessions, createOptions } = makeFakeHub();
+    const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
     try {
-      await fetch(`${baseUrl}/api/prompt`, {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '你好' }),
       });
 
@@ -96,19 +92,19 @@ describe('配置接口', () => {
       };
       const put = await fetch(`${baseUrl}/api/config`, {
         method: 'PUT',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify(newConfig),
       });
       expect(put.status).toBe(204);
       expect(sessions[0]!.disposeCalls).toBe(1);
 
-      await fetch(`${baseUrl}/api/prompt`, {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '还在吗' }),
       });
       expect(sessions).toHaveLength(2);
-      expect(createOptions[1]).toEqual(newConfig);
+      expect(hub.openSession).toHaveBeenLastCalledWith(newConfig, 'session-1');
     } finally {
       await close();
     }

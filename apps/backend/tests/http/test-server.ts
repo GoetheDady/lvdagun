@@ -16,8 +16,6 @@ import type { FileConfigStore } from '../../src/config/config-store';
 import type { Hub, HubSession } from '../../src/hub/hub';
 import { createServer } from '../../src/http/server';
 
-export const TOKEN = 'test-token';
-
 export const validConfig: ModelConfig = {
   provider: 'anthropic',
   apiKey: 'sk-test',
@@ -58,16 +56,19 @@ export function assistantMessage(
 
 /** 测试用可控 Hub 会话。 */
 export class FakeSession implements HubSession {
+  readonly createdAt = Date.now();
   readonly promptTexts: string[] = [];
   readonly messages: ChatMessage[] = [];
   disposeCalls = 0;
-  newSessionCalls = 0;
   abortCalls = 0;
   isRunning = false;
   thinkingLevel: ThinkingLevel = 'medium';
   readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
   private timestamp = 1;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
+
+  /** @param id - 会话标识 */
+  constructor(readonly id: string) {}
 
   /**
    * 接受用户提示并发出 Pi 原生消息生命周期事件。
@@ -117,16 +118,6 @@ export class FakeSession implements HubSession {
   });
 
   /**
-   * 创建一个空的新会话。
-   *
-   * @returns 操作完成后的 Promise
-   */
-  newSession = vi.fn(async (): Promise<void> => {
-    this.newSessionCalls += 1;
-    this.messages.splice(0);
-  });
-
-  /**
    * 中止当前运行。
    *
    * @returns 操作完成后的 Promise
@@ -169,7 +160,10 @@ export class FakeSession implements HubSession {
     const timestamp = this.timestamp++;
     const startMessage = assistantMessage('', timestamp, 'pending');
     this.emit({ type: 'message_start', message: startMessage });
-    this.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_start', contentIndex: 0 } });
+    this.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_start', contentIndex: 0 },
+    });
     for (const char of text) {
       this.emit({
         type: 'message_update',
@@ -213,6 +207,17 @@ export function makeFakeHub(): {
 } {
   const sessions: FakeSession[] = [];
   const createOptions: ModelConfig[] = [];
+  let nextSessionId = 1;
+
+  /** @param sessionId - 会话标识 @returns 已有或新建的测试会话 */
+  const getOrCreateSession = (sessionId: string): FakeSession => {
+    const existing = sessions.find((session) => session.id === sessionId);
+    if (existing) return existing;
+    const session = new FakeSession(sessionId);
+    sessions.push(session);
+    return session;
+  };
+
   const hub: Hub = {
     listProviders: vi.fn(async () => [{ id: 'anthropic', name: 'Anthropic' }]),
     listModels: vi.fn(async (providerId) =>
@@ -222,9 +227,23 @@ export function makeFakeHub(): {
       async (_provider: string, apiKey: string): Promise<TestConnectionResult> =>
         apiKey === 'good' ? { ok: true } : { ok: false, message: '401 凭证无效' }
     ),
+    listSessions: vi.fn(async () =>
+      sessions.map((session) => ({
+        id: session.id,
+        createdAt: session.createdAt,
+        updatedAt: session.messages.at(-1)?.timestamp ?? session.createdAt,
+        messageCount: session.messages.length,
+      }))
+    ),
     createSession: vi.fn(async (options) => {
       createOptions.push(options);
-      const session = new FakeSession();
+      while (sessions.some((session) => session.id === `session-${nextSessionId}`)) {
+        nextSessionId += 1;
+      }
+      return getOrCreateSession(`session-${nextSessionId++}`);
+    }),
+    openSession: vi.fn(async (_options, sessionId) => {
+      const session = new FakeSession(sessionId);
       sessions.push(session);
       return session;
     }),
@@ -237,15 +256,13 @@ export function makeFakeHub(): {
  *
  * @param hub - 测试 Agent Hub
  * @param configStore - 测试配置存储
- * @param token - 本机访问 token
  * @returns 服务地址与关闭函数
  */
 export async function startServer(
   hub: Hub,
-  configStore: FileConfigStore,
-  token = TOKEN
+  configStore: FileConfigStore
 ): Promise<{ baseUrl: string; close: () => Promise<void> }> {
-  const app: Express = createServer({ hub, configStore, token });
+  const app: Express = createServer({ hub, configStore });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const { port } = server.address() as AddressInfo;
@@ -259,16 +276,13 @@ export async function startServer(
  * 打开 SSE 测试连接。
  *
  * @param baseUrl - 测试服务地址
- * @param token - 本机访问 token
  * @returns 逐帧读取事件和关闭连接的方法
  */
 export async function openEvents(
   baseUrl: string,
-  token: string
+  sessionId = 'session-1'
 ): Promise<{ nextEvent: (timeoutMs?: number) => Promise<AgentStreamEvent>; close: () => void }> {
-  const response = await fetch(`${baseUrl}/api/events`, {
-    headers: { 'x-lvdagun-token': token },
-  });
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/events`);
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/event-stream');
 

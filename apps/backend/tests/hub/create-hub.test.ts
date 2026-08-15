@@ -20,11 +20,25 @@ const pi = vi.hoisted(() => ({
     isIdle: true,
     thinkingLevel: 'medium',
     abortCalls: 0,
-    newSessionCalls: 0,
     disposeCalls: 0,
     flushCalls: 0,
     activeTools: [] as string[],
     resourceLoaderOptions: null as null | Record<string, unknown>,
+    openSessionPaths: [] as string[],
+    persistedFiles: [] as Array<{ path: string; content: string }>,
+    sessionInfos: [] as Array<{
+      id: string;
+      path: string;
+      created: Date;
+      modified: Date;
+      messageCount: number;
+    }>,
+  },
+}));
+
+vi.mock('node:fs/promises', () => ({
+  writeFile: async (path: string, content: string) => {
+    pi.state.persistedFiles.push({ path, content });
   },
 }));
 
@@ -69,6 +83,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   const createSession = () => {
     let listener: ((event: unknown) => void) | null = null;
     return {
+      sessionId: 'test-session',
       get isIdle() {
         return pi.state.isIdle;
       },
@@ -109,6 +124,18 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     },
   };
 
+  const sessionManager = {
+    getCwd: () => '/Users/test',
+    getSessionFile: () => '/tmp/lvdagun-test/sessions/test-session.jsonl',
+    getHeader: () => ({
+      type: 'session',
+      version: 3,
+      id: 'test-session',
+      timestamp: '2026-08-15T00:00:00.000Z',
+      cwd: '/Users/test',
+    }),
+  };
+
   return {
     ModelRuntime: {
       create: async () => {
@@ -117,8 +144,17 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       },
     },
     SettingsManager: { create: () => settingsManager },
-    SessionManager: { inMemory: () => ({}) },
-    createAgentSessionServices: async (options: { resourceLoaderOptions: Record<string, unknown> }) => {
+    SessionManager: {
+      create: () => sessionManager,
+      open: (path: string) => {
+        pi.state.openSessionPaths.push(path);
+        return sessionManager;
+      },
+      listAll: async () => pi.state.sessionInfos,
+    },
+    createAgentSessionServices: async (options: {
+      resourceLoaderOptions: Record<string, unknown>;
+    }) => {
       pi.state.resourceLoaderOptions = options.resourceLoaderOptions;
       return { settingsManager, diagnostics: [] };
     },
@@ -131,24 +167,13 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       options: Record<string, unknown>
     ) => {
       const created = await factory(options);
-      let session = created.session as ReturnType<typeof createSession>;
-      let rebind: ((nextSession: ReturnType<typeof createSession>) => Promise<void>) | undefined;
+      const session = created.session as ReturnType<typeof createSession>;
       return {
         get session() {
           return session;
         },
         services: created.services,
-        setRebindSession: (
-          callback?: (nextSession: ReturnType<typeof createSession>) => Promise<void>
-        ) => {
-          rebind = callback;
-        },
-        newSession: async () => {
-          pi.state.newSessionCalls += 1;
-          pi.state.messages = [];
-          session = createSession();
-          await rebind?.(session);
-        },
+        setRebindSession: () => {},
         dispose: async () => {
           pi.state.disposeCalls += 1;
         },
@@ -192,11 +217,13 @@ beforeEach(() => {
   pi.state.isIdle = true;
   pi.state.thinkingLevel = 'medium';
   pi.state.abortCalls = 0;
-  pi.state.newSessionCalls = 0;
   pi.state.disposeCalls = 0;
   pi.state.flushCalls = 0;
   pi.state.activeTools = [];
   pi.state.resourceLoaderOptions = null;
+  pi.state.openSessionPaths = [];
+  pi.state.persistedFiles = [];
+  pi.state.sessionInfos = [];
 });
 
 describe('createHub 目录能力', () => {
@@ -284,6 +311,43 @@ describe('createHub 会话能力', () => {
       noThemes: true,
       noContextFiles: true,
     });
+    expect(pi.state.persistedFiles).toEqual([
+      {
+        path: '/tmp/lvdagun-test/sessions/test-session.jsonl',
+        content:
+          '{"type":"session","version":3,"id":"test-session","timestamp":"2026-08-15T00:00:00.000Z","cwd":"/Users/test"}\n',
+      },
+    ]);
+  });
+
+  it('列出持久化会话并按不透明 id 打开对应 Pi 文件', async () => {
+    pi.state.sessionInfos = [
+      {
+        id: 'older',
+        path: '/tmp/lvdagun-test/sessions/older.jsonl',
+        created: new Date(10),
+        modified: new Date(20),
+        messageCount: 2,
+      },
+      {
+        id: 'newer',
+        path: '/tmp/lvdagun-test/sessions/newer.jsonl',
+        created: new Date(30),
+        modified: new Date(40),
+        messageCount: 4,
+      },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+
+    await expect(hub.listSessions()).resolves.toEqual([
+      { id: 'newer', createdAt: 30, updatedAt: 40, messageCount: 4 },
+      { id: 'older', createdAt: 10, updatedAt: 20, messageCount: 2 },
+    ]);
+    await hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'older');
+    expect(pi.state.openSessionPaths).toEqual(['/tmp/lvdagun-test/sessions/older.jsonl']);
+    await expect(
+      hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'missing')
+    ).rejects.toThrow('会话不存在:missing');
   });
 
   it('原样镜像 Pi JSON 事件，并去掉 message_update 累计快照', async () => {
@@ -337,7 +401,7 @@ describe('createHub 会话能力', () => {
     ]);
   });
 
-  it('委托中止、新会话和思考等级，并异步释放 Runtime', async () => {
+  it('委托中止和思考等级，并异步释放 Runtime', async () => {
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
@@ -346,14 +410,12 @@ describe('createHub 会话能力', () => {
     });
 
     await session.abort();
-    await session.newSession();
     await expect(session.setThinkingLevel('high')).resolves.toMatchObject({
       thinkingLevel: 'high',
     });
     await session.dispose();
 
     expect(pi.state.abortCalls).toBe(1);
-    expect(pi.state.newSessionCalls).toBe(1);
     expect(pi.state.flushCalls).toBeGreaterThanOrEqual(2);
     expect(pi.state.disposeCalls).toBe(1);
   });

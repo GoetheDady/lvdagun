@@ -20,7 +20,7 @@ bun run stop         # 停止本地服务(lvdagun stop)
 ```
 
 - 服务默认监听 `localhost:16345`,可用 `--port` 覆盖
-- 所有 API 需携带本机 token(首次启动生成于 `~/.lvdagun/token`)
+- 当前开发阶段不做访问验证,任何可达客户端均可调用全部 API 与 Agent 能力
 - 关闭浏览器标签页 ≠ 退出:会话上下文保留在服务进程内存,`stop` 才结束
 - 配置与数据存于 `~/.lvdagun/`
 

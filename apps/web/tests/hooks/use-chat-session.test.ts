@@ -1,11 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type {
-  AgentSessionState,
-  AgentStreamEvent,
-  ChatMessage,
-} from '@lvdagun/protocol';
+import type { AgentSessionState, AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
 
 import {
   applyAssistantUpdate,
@@ -20,7 +16,6 @@ vi.mock('@/services/api-client', () => ({
     getMessages: vi.fn(),
     getSessionState: vi.fn(),
     prompt: vi.fn(),
-    newSession: vi.fn(),
     abortSession: vi.fn(),
     setThinkingLevel: vi.fn(),
   },
@@ -29,6 +24,7 @@ vi.mock('@/services/api-client', () => ({
 vi.mock('@/services/event-stream', () => ({
   subscribeEvents: vi.fn(
     (
+      _sessionId: string,
       onEvent: (event: AgentStreamEvent) => void,
       onError?: (error: Error) => void
     ) => {
@@ -99,7 +95,6 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(stateCopy());
   vi.mocked(api.prompt).mockResolvedValue(undefined);
-  vi.mocked(api.newSession).mockResolvedValue(undefined);
   vi.mocked(api.abortSession).mockResolvedValue(undefined);
   vi.mocked(api.setThinkingLevel).mockResolvedValue(stateCopy({ thinkingLevel: 'high' }));
 });
@@ -135,7 +130,10 @@ describe('chatReducer', () => {
     expect(state.activeAssistant?.content).toEqual([{ type: 'text', text: '你好' }]);
 
     const final = assistantMessage('你好', 2);
-    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: final } });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: { type: 'message_end', message: final },
+    });
     expect(state.activeAssistant).toBeNull();
     expect(state.messages).toEqual([final]);
   });
@@ -183,7 +181,10 @@ describe('chatReducer', () => {
     });
     expect(state.toolRuns['call-1']?.status).toBe('running');
     const final = { ...assistantMessage('', 2), content: [toolCall] };
-    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: final } });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: { type: 'message_end', message: final },
+    });
     const result: ChatMessage = {
       role: 'toolResult',
       toolCallId: 'call-1',
@@ -193,7 +194,10 @@ describe('chatReducer', () => {
       isError: false,
       timestamp: 3,
     };
-    state = chatReducer(state, { type: 'pi_event', event: { type: 'message_end', message: result } });
+    state = chatReducer(state, {
+      type: 'pi_event',
+      event: { type: 'message_end', message: result },
+    });
     expect(state.toolRuns['call-1']).toMatchObject({ status: 'success', result });
     expect(state.messages).toEqual([final, result]);
   });
@@ -240,7 +244,10 @@ describe('chatReducer', () => {
 
   it('中止的回复保留 aborted 结构化消息', () => {
     const message = assistantMessage('部分内容', 2, 'aborted');
-    const state = chatReducer(initialState, { type: 'pi_event', event: { type: 'message_end', message } });
+    const state = chatReducer(initialState, {
+      type: 'pi_event',
+      event: { type: 'message_end', message },
+    });
     expect(state.messages[0]).toMatchObject({ stopReason: 'aborted' });
   });
 
@@ -257,40 +264,37 @@ describe('chatReducer', () => {
 
 describe('useChatSession', () => {
   it('历史和状态加载后再订阅 Pi SSE', async () => {
-    const { result } = renderHook(() => useChatSession());
+    const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
     expect(result.current.state.loading).toBe(false);
   });
 
   it('发送失败后保留可重试错误', async () => {
     vi.mocked(api.prompt).mockRejectedValue(new Error('请求失败'));
-    const { result } = renderHook(() => useChatSession());
+    const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
     await act(async () => result.current.send('你好'));
     expect(result.current.state.error).toEqual({ message: '请求失败', retryable: true });
   });
 
   it('运行中拒绝并发发送，stop 调用 Pi abort', async () => {
-    const { result } = renderHook(() => useChatSession());
+    const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
     act(() => captured.onEvent!({ type: 'agent_start' }));
     await act(async () => result.current.send('插队消息'));
     expect(api.prompt).not.toHaveBeenCalled();
     await act(async () => result.current.abort());
-    expect(api.abortSession).toHaveBeenCalledTimes(1);
+    expect(api.abortSession).toHaveBeenCalledWith('session-a');
   });
 
-  it('重试最后一条用户消息，并使用 Pi 原生新会话和思考等级', async () => {
-    const { result } = renderHook(() => useChatSession());
+  it('重试最后一条用户消息，并按会话设置思考等级', async () => {
+    const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
     const message: ChatMessage = { role: 'user', content: '你好', timestamp: 1 };
     act(() => captured.onEvent!({ type: 'message_end', message }));
     act(() => result.current.retry());
-    await waitFor(() => expect(api.prompt).toHaveBeenCalledWith('你好'));
+    await waitFor(() => expect(api.prompt).toHaveBeenCalledWith('session-a', '你好'));
     await act(async () => result.current.setThinkingLevel('high'));
-    expect(api.setThinkingLevel).toHaveBeenCalledWith('high');
-    await act(async () => result.current.newSession());
-    expect(api.newSession).toHaveBeenCalledTimes(1);
-    expect(result.current.state.messages).toEqual([]);
+    expect(api.setThinkingLevel).toHaveBeenCalledWith('session-a', 'high');
   });
 });

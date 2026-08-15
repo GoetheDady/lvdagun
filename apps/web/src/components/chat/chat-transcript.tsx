@@ -165,7 +165,7 @@ function ThinkingBlock(props: {
 
   return (
     <details
-      className="group border-l-2 border-amber-500/40 pl-3 text-muted-foreground"
+      className="group border-l-2 border-soy/60 pl-3 text-muted-foreground"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
@@ -361,10 +361,7 @@ function OrphanToolResult(props: { message: ToolResultChatMessage }): React.JSX.
  * @returns 对应元素；隐藏的自定义消息返回 null
  */
 function SpecialMessage(props: {
-  message: Exclude<
-    ChatMessage,
-    { role: 'user' | 'assistant' | 'toolResult' }
-  >;
+  message: Exclude<ChatMessage, { role: 'user' | 'assistant' | 'toolResult' }>;
 }): React.JSX.Element | null {
   const { message } = props;
   if (message.role === 'compactionSummary') {
@@ -502,7 +499,7 @@ function CompactionNotice(props: { compaction: CompactionState }): React.JSX.Ele
       )}
       {props.compaction.status === 'aborted'
         ? '上下文压缩已中止'
-        : props.compaction.message ?? '上下文压缩失败'}
+        : (props.compaction.message ?? '上下文压缩失败')}
     </div>
   );
 }

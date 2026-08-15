@@ -1,47 +1,41 @@
-import { API_PATHS, TOKEN_HEADER, type AgentStreamEvent } from '@lvdagun/protocol';
-
-import { getToken } from './access-token';
+import { sessionApiPaths, type AgentStreamEvent } from '@lvdagun/protocol';
 
 /**
  * 订阅 Agent Hub 的 SSE 事件流。
  *
+ * @param sessionId - 当前会话标识
  * @param onEvent - 事件回调
  * @param onError - 连接错误回调
  * @returns 退订函数
  */
 export function subscribeEvents(
+  sessionId: string,
   onEvent: (event: AgentStreamEvent) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const token = getToken();
   const controller = new AbortController();
-  if (!token) {
-    onError?.(new Error('缺少访问 token'));
-    return () => controller.abort();
-  }
 
-  void readEventStream(token, controller, onEvent, onError);
+  void readEventStream(sessionId, controller, onEvent, onError);
   return () => controller.abort();
 }
 
 /**
  * 建立并持续解析 SSE 连接。
  *
- * @param token - 本机访问 token
+ * @param sessionId - 当前会话标识
  * @param controller - 用于退订的请求控制器
  * @param onEvent - 事件回调
  * @param onError - 连接错误回调
  * @returns 连接结束后解决的 Promise
  */
 async function readEventStream(
-  token: string,
+  sessionId: string,
   controller: AbortController,
   onEvent: (event: AgentStreamEvent) => void,
   onError?: (error: Error) => void
 ): Promise<void> {
   try {
-    const response = await fetch(API_PATHS.events, {
-      headers: { [TOKEN_HEADER]: token },
+    const response = await fetch(sessionApiPaths(sessionId).events, {
       signal: controller.signal,
     });
     if (!response.ok || !response.body) {

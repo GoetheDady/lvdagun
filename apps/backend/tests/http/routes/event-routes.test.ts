@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
 
 import { FileConfigStore } from '../../../src/config/config-store';
-import { makeFakeHub, openEvents, startServer, TOKEN, validConfig } from '../test-server';
+import { makeFakeHub, openEvents, startServer, validConfig } from '../test-server';
 
 let dir: string;
 
@@ -29,7 +29,7 @@ function firstText(message: ChatMessage): string {
   if (message.role === 'user') {
     return typeof message.content === 'string'
       ? message.content
-      : message.content.find((content) => content.type === 'text')?.text ?? '';
+      : (message.content.find((content) => content.type === 'text')?.text ?? '');
   }
   if (message.role === 'assistant' || message.role === 'toolResult') {
     return message.content.find((content) => content.type === 'text')?.text ?? '';
@@ -43,11 +43,11 @@ describe('事件流接口', () => {
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
-    const events = await openEvents(baseUrl, TOKEN);
+    const events = await openEvents(baseUrl);
     try {
-      const response = await fetch(`${baseUrl}/api/prompt`, {
+      const response = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '你好' }),
       });
       expect(response.status).toBe(202);
@@ -87,9 +87,7 @@ describe('事件流接口', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: '你好呀' }] },
       });
 
-      const messages = await fetch(`${baseUrl}/api/messages`, {
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
+      const messages = await fetch(`${baseUrl}/api/sessions/session-1/messages`);
       const history = (await messages.json()) as ChatMessage[];
       expect(history.map((message) => [message.role, firstText(message)])).toEqual([
         ['user', '你好'],
@@ -101,30 +99,23 @@ describe('事件流接口', () => {
     }
   });
 
-  it('新会话使用 Pi 原生能力且不产生 Hub 自定义事件', async () => {
-    const { hub, sessions } = makeFakeHub();
+  it('创建新会话不会清空原会话消息', async () => {
+    const { hub } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
     try {
-      await fetch(`${baseUrl}/api/prompt`, {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '你好' }),
       });
-      sessions[0]!.isRunning = false;
+      const response = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' });
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toEqual({ sessionId: 'session-2' });
 
-      const response = await fetch(`${baseUrl}/api/session/new`, {
-        method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
-      expect(response.status).toBe(204);
-      expect(sessions[0]!.newSessionCalls).toBe(1);
-
-      const messages = await fetch(`${baseUrl}/api/messages`, {
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
-      await expect(messages.json()).resolves.toEqual([]);
+      const messages = await fetch(`${baseUrl}/api/sessions/session-1/messages`);
+      await expect(messages.json()).resolves.toHaveLength(1);
     } finally {
       await close();
     }

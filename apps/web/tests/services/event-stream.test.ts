@@ -5,7 +5,6 @@ import type { AgentStreamEvent } from '@lvdagun/protocol';
 import { subscribeEvents } from '@/services/event-stream';
 
 beforeEach(() => {
-  localStorage.clear();
   vi.stubGlobal('fetch', vi.fn());
 });
 
@@ -43,10 +42,8 @@ describe('subscribeEvents', () => {
         'date","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"嗨"}}\n\n',
       ])
     );
-    localStorage.setItem('lvdagun-token', 'tok');
-
     const events: AgentStreamEvent[] = [];
-    subscribeEvents((event) => events.push(event));
+    subscribeEvents('session-a', (event) => events.push(event));
 
     await vi.waitFor(() => {
       expect(events.length).toBe(3);
@@ -58,15 +55,13 @@ describe('subscribeEvents', () => {
     });
 
     const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe('/api/events');
-    expect((init!.headers as Record<string, string>)['x-lvdagun-token']).toBe('tok');
+    expect(url).toBe('/api/sessions/session-a/events');
+    expect(init!.headers).toBeUndefined();
   });
 
   it('退订后中止连接', () => {
     vi.mocked(fetch).mockResolvedValue(sseResponse([]));
-    localStorage.setItem('lvdagun-token', 'tok');
-
-    const unsubscribe = subscribeEvents(vi.fn());
+    const unsubscribe = subscribeEvents('session-a', vi.fn());
     unsubscribe();
 
     const init = vi.mocked(fetch).mock.calls[0]![1]!;

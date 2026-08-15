@@ -17,4 +17,25 @@ export interface AgentSessionState {
   availableThinkingLevels: ThinkingLevel[];
 }
 
+/** 侧边栏展示的持久化会话摘要 */
+export interface SessionSummary {
+  /** 不透明会话标识，不暴露本机会话文件路径 */
+  id: string;
+  /** 当前展示标题；自动标题功能接入前固定为“新对话” */
+  title: string;
+  /** 会话创建时间，Unix 毫秒时间戳 */
+  createdAt: number;
+  /** 最后一条消息更新时间，Unix 毫秒时间戳 */
+  updatedAt: number;
+  /** Pi 会话文件中的消息条目数量 */
+  messageCount: number;
+  /** 该会话的 Agent 是否正在运行 */
+  isRunning: boolean;
+}
+
+/** 创建持久化会话后的资源标识 */
+export interface CreateSessionResult {
+  sessionId: string;
+}
+
 export type { ThinkingLevel };

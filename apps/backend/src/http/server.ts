@@ -7,8 +7,6 @@ import type { ConfigStore } from '../config/config-store';
 import { AgentBusyError } from '../hub/hub';
 import type { Hub } from '../hub/hub';
 import { NotConfiguredError, createSessionManager } from '../sessions/session-manager';
-import { createEventStream } from './event-stream';
-import { createTokenAuth } from './middleware/token-auth';
 import { registerCatalogRoutes } from './routes/catalog-routes';
 import { registerChatRoutes } from './routes/chat-routes';
 import { registerConfigRoutes } from './routes/config-routes';
@@ -18,7 +16,6 @@ import { registerEventRoutes } from './routes/event-routes';
 export interface ServerDeps {
   configStore: ConfigStore;
   hub: Hub;
-  token: string;
   /** 生产环境客户端构建产物目录；开发环境不提供 */
   webDist?: string;
 }
@@ -26,21 +23,19 @@ export interface ServerDeps {
 /**
  * 创建本地服务应用。
  *
- * @param deps - 配置存储、Agent Hub、访问 token 与可选静态资源目录
+ * @param deps - 配置存储、Agent Hub 与可选静态资源目录
  * @returns Express 应用
  */
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   app.use(express.json());
-  app.use('/api', createTokenAuth(deps.token));
 
-  const eventStream = createEventStream();
-  const sessionManager = createSessionManager(deps.hub, deps.configStore, eventStream.broadcast);
+  const sessionManager = createSessionManager(deps.hub, deps.configStore);
 
   registerConfigRoutes(app, deps.configStore, sessionManager);
   registerCatalogRoutes(app, deps.hub);
   registerChatRoutes(app, sessionManager);
-  registerEventRoutes(app, eventStream);
+  registerEventRoutes(app, sessionManager);
 
   if (deps.webDist) {
     app.use(express.static(deps.webDist));

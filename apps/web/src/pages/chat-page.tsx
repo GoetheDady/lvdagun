@@ -1,32 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
-import {
-  Loader2,
-  MessageSquarePlus,
-  RotateCcw,
-  Send,
-  Settings,
-  Square,
-} from 'lucide-react';
+import { Navigate, useNavigate, useParams } from 'react-router';
+import { Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { useDefaultLayout } from 'react-resizable-panels';
 
 import type { ThinkingLevel } from '@lvdagun/protocol';
 
+import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useChatSession } from '@/hooks/use-chat-session';
+import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 
 /** 空会话中可直接填入输入框的示例提示。 */
 const SUGGESTIONS = ['总结今天的重要新闻', '帮我检查一个本地项目', '制定本周待办计划'];
+
+/** 会话侧栏布局在浏览器中的稳定标识。 */
+const CHAT_LAYOUT_ID = 'chat-workspace-layout';
 
 /** Pi 思考等级的中文标签。 */
 const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
@@ -40,16 +30,100 @@ const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
 };
 
 /**
- * 渲染本地 Pi Agent 对话工作台。
+ * 从 URL 解析当前会话，并在会话变化时重建客户端状态。
  *
- * @returns 对话页元素
+ * @returns 按 session id 寻址的对话工作台
  */
 function ChatPage(): React.JSX.Element {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  if (!sessionId) {
+    return <Navigate to="/" replace />;
+  }
+  return <ChatShell sessionId={sessionId} />;
+}
+
+/**
+ * 保持桌面端会话侧栏稳定，只在切换时重建右侧对话区域。
+ *
+ * @param props - 当前 URL 中的会话标识
+ * @returns 对话工作台
+ */
+function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
   const navigate = useNavigate();
-  const { state, send, retry, abort, newSession, setThinkingLevel } = useChatSession();
+  const sessionList = useSessionList();
+  const persistedLayout = useDefaultLayout({
+    id: CHAT_LAYOUT_ID,
+    panelIds: ['session-sidebar', 'chat-workspace'],
+  });
+
+  /**
+   * 创建持久化会话并导航到其 URL。
+   *
+   * @returns 无返回值
+   */
+  const handleNewSession = (): void => {
+    void sessionList.createSession().then((createdId) => {
+      if (createdId) {
+        navigate(`/sessions/${encodeURIComponent(createdId)}`);
+      }
+    });
+  };
+
+  return (
+    <main className="flex h-dvh min-h-[32rem] min-w-[64rem] overflow-hidden bg-background">
+      <ResizablePanelGroup id={CHAT_LAYOUT_ID} orientation="horizontal" {...persistedLayout}>
+        <ResizablePanel
+          id="session-sidebar"
+          defaultSize="256px"
+          minSize="208px"
+          maxSize="384px"
+          groupResizeBehavior="preserve-pixel-size"
+        >
+          <SessionSidebar
+            sessions={sessionList.sessions}
+            activeSessionId={sessionId}
+            loading={sessionList.loading}
+            creating={sessionList.creating}
+            error={sessionList.error}
+            onCreate={handleNewSession}
+            onSelect={(selectedId) => navigate(`/sessions/${encodeURIComponent(selectedId)}`)}
+            onSettings={() => navigate('/settings')}
+          />
+        </ResizablePanel>
+
+        <ResizableHandle
+          aria-label="调整侧栏宽度"
+          className="bg-sidebar-border transition-colors hover:bg-wood focus-visible:bg-primary focus-visible:ring-primary/30"
+        />
+
+        <ResizablePanel id="chat-workspace" className="min-w-0">
+          <ChatWorkspace key={sessionId} sessionId={sessionId} sessionList={sessionList} />
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    </main>
+  );
+}
+
+/**
+ * 渲染当前会话的消息和输入区域。
+ *
+ * @param props - 当前会话标识与稳定的侧边栏列表状态
+ * @returns 当前会话工作区
+ */
+function ChatWorkspace({
+  sessionId,
+  sessionList,
+}: {
+  sessionId: string;
+  sessionList: SessionList;
+}): React.JSX.Element {
+  const { state, send, retry, abort, setThinkingLevel } = useChatSession(sessionId);
+  const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
-  const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const anotherRunningSession = sessionList.sessions.find(
+    (session) => session.isRunning && session.id !== sessionId
+  );
   const hasTranscript =
     state.messages.length > 0 ||
     state.activeAssistant !== null ||
@@ -67,6 +141,10 @@ function ChatPage(): React.JSX.Element {
     state.toolRuns,
   ]);
 
+  useEffect(() => {
+    void refreshSessionList();
+  }, [refreshSessionList, state.isRunning]);
+
   /**
    * 校验并发送当前输入。
    *
@@ -74,7 +152,7 @@ function ChatPage(): React.JSX.Element {
    */
   const handleSend = (): void => {
     const text = input.trim();
-    if (!text || state.sending || state.isRunning) {
+    if (!text || state.sending || state.isRunning || anotherRunningSession) {
       return;
     }
     setInput('');
@@ -82,19 +160,7 @@ function ChatPage(): React.JSX.Element {
   };
 
   /**
-   * 使用 Pi 原生能力开始新会话。
-   *
-   * @returns 无返回值
-   */
-  const handleNewSession = (): void => {
-    if (state.isRunning || state.creatingSession) {
-      return;
-    }
-    void newSession();
-  };
-
-  /**
-   * 将原生下拉框值转换为 Pi 思考等级。
+   * 更新当前会话的思考等级。
    *
    * @param level - 当前模型支持的思考等级字符串
    * @returns 无返回值
@@ -103,98 +169,54 @@ function ChatPage(): React.JSX.Element {
     void setThinkingLevel(level as ThinkingLevel);
   };
 
+  const inputPlaceholder = anotherRunningSession
+    ? '另一个会话正在运行'
+    : state.isRunning
+      ? 'Agent 正在运行'
+      : '输入消息';
+
   return (
-    <main className="flex h-dvh min-h-[32rem] flex-col overflow-hidden bg-background">
-      <header className="shrink-0 border-b bg-background/95 px-3 py-2 backdrop-blur sm:px-5">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2">
-          <div className="mr-auto flex min-w-0 items-center gap-2.5">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-              驴
-            </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-sm font-semibold">驴打滚</h1>
-              <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span
-                  className={`size-1.5 rounded-full ${state.isRunning ? 'animate-pulse bg-amber-500' : 'bg-emerald-600'}`}
-                />
-                {state.isRunning ? '运行中' : '就绪'}
-              </p>
-            </div>
-          </div>
-
-          {state.session ? (
-            <label className="flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs text-muted-foreground">
-              <span className="hidden sm:inline">思考</span>
-              <select
-                aria-label="思考等级"
-                className="max-w-24 bg-transparent text-foreground outline-none"
-                value={state.session.thinkingLevel}
-                disabled={state.settingThinkingLevel}
-                onChange={(event) => handleThinkingLevelChange(event.target.value)}
-              >
-                {state.session.availableThinkingLevels.map((level) => (
-                  <option key={level} value={level}>
-                    {THINKING_LEVEL_LABELS[level]}
-                  </option>
-                ))}
-              </select>
-              {state.settingThinkingLevel ? <Loader2 className="size-3 animate-spin" /> : null}
-            </label>
-          ) : null}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            title="新对话"
-            aria-label="新对话"
-            disabled={state.isRunning || state.creatingSession}
-            onClick={() => setNewSessionDialogOpen(true)}
-          >
-            {state.creatingSession ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <MessageSquarePlus />
-            )}
-            <span className="hidden sm:inline">新对话</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="设置"
-            aria-label="设置"
-            onClick={() => navigate('/settings')}
-          >
-            <Settings />
-          </Button>
+    <div className="flex h-full min-w-0 flex-1 flex-col">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
+        <div className="mr-auto min-w-0">
+          <h2 className="truncate text-sm font-semibold">新对话</h2>
+          <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span
+              className={`size-1.5 rounded-full ${
+                state.isRunning ? 'animate-pulse bg-soy' : 'bg-wood'
+              }`}
+            />
+            {state.isRunning ? '运行中' : '就绪'}
+          </p>
         </div>
+
+        {state.session ? (
+          <label className="flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs text-muted-foreground">
+            <span>思考</span>
+            <select
+              aria-label="思考等级"
+              className="max-w-24 bg-transparent text-foreground outline-none"
+              value={state.session.thinkingLevel}
+              disabled={state.settingThinkingLevel}
+              onChange={(event) => handleThinkingLevelChange(event.target.value)}
+            >
+              {state.session.availableThinkingLevels.map((level) => (
+                <option key={level} value={level}>
+                  {THINKING_LEVEL_LABELS[level]}
+                </option>
+              ))}
+            </select>
+            {state.settingThinkingLevel ? <Loader2 className="size-3 animate-spin" /> : null}
+          </label>
+        ) : null}
       </header>
 
-      <AlertDialog open={newSessionDialogOpen} onOpenChange={setNewSessionDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>开始新对话？</AlertDialogTitle>
-            <AlertDialogDescription>
-              当前对话将从界面移除，新消息会进入一个独立的 Pi 会话。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={state.isRunning || state.creatingSession}
-              onClick={handleNewSession}
-            >
-              开始新对话
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <section className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5">
+      <section className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl">
           {!state.loading && !hasTranscript ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-5 text-center">
               <div>
-                <h2 className="text-base font-semibold">开始一段新对话</h2>
+                <h3 className="text-base font-semibold">开始一段新对话</h3>
                 <p className="mt-1 text-sm text-muted-foreground">本地 Pi Agent 已准备就绪</p>
               </div>
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
@@ -236,14 +258,14 @@ function ChatPage(): React.JSX.Element {
         </div>
       </section>
 
-      <footer className="shrink-0 border-t bg-background px-3 py-3 sm:px-5">
+      <footer className="shrink-0 border-t bg-background px-5 py-3">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <textarea
             className="max-h-40 min-h-11 flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2.5 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder={state.isRunning ? 'Agent 正在运行' : '输入消息'}
+            placeholder={inputPlaceholder}
             rows={2}
             value={input}
-            disabled={state.loading}
+            disabled={state.loading || Boolean(anotherRunningSession)}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -261,12 +283,18 @@ function ChatPage(): React.JSX.Element {
               aria-label="停止"
               onClick={() => void abort()}
             >
-              {state.aborting ? <Loader2 className="animate-spin" /> : <Square className="fill-current" />}
+              {state.aborting ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Square className="fill-current" />
+              )}
             </Button>
           ) : (
             <Button
               className="h-11 min-w-11"
-              disabled={!input.trim() || state.sending || state.loading}
+              disabled={
+                !input.trim() || state.sending || state.loading || Boolean(anotherRunningSession)
+              }
               title="发送"
               aria-label="发送"
               onClick={handleSend}
@@ -276,7 +304,7 @@ function ChatPage(): React.JSX.Element {
           )}
         </div>
       </footer>
-    </main>
+    </div>
   );
 }
 

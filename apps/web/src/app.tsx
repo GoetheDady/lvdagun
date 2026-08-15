@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router';
 import type { ModelConfig } from '@lvdagun/protocol';
 
 import ChatPage from '@/pages/chat-page';
+import SessionIndexPage from '@/pages/session-index-page';
 import SettingsPage from '@/pages/settings-page';
 import WizardPage from '@/pages/wizard-page';
 import { api } from '@/services/api-client';
@@ -18,7 +19,22 @@ import { api } from '@/services/api-client';
 function App(): React.JSX.Element {
   return (
     <Routes>
-      <Route path="/" element={<ConfigGuard />} />
+      <Route
+        path="/"
+        element={
+          <ConfigGuard>
+            <SessionIndexPage />
+          </ConfigGuard>
+        }
+      />
+      <Route
+        path="/sessions/:sessionId"
+        element={
+          <ConfigGuard>
+            <ChatPage />
+          </ConfigGuard>
+        }
+      />
       <Route path="/wizard" element={<WizardPage />} />
       <Route path="/settings" element={<SettingsPage />} />
     </Routes>
@@ -30,7 +46,7 @@ function App(): React.JSX.Element {
  *
  * 向导保存配置后 navigate('/') 会重新挂载本组件,触发一次新的配置读取。
  */
-function ConfigGuard(): React.JSX.Element {
+function ConfigGuard({ children }: { children: React.ReactNode }): React.JSX.Element {
   // undefined = 读取中,null = 未配置
   const [config, setConfig] = useState<ModelConfig | null | undefined>(undefined);
 
@@ -53,7 +69,7 @@ function ConfigGuard(): React.JSX.Element {
   if (config === undefined) {
     return <main className="min-h-screen bg-muted/40" />;
   }
-  return config === null ? <Navigate to="/wizard" replace /> : <ChatPage />;
+  return config === null ? <Navigate to="/wizard" replace /> : <>{children}</>;
 }
 
 export default App;

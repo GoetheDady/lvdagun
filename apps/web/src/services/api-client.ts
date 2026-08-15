@@ -1,35 +1,28 @@
 /** @file 客户端普通 HTTP 请求的唯一入口 */
 import {
   API_PATHS,
-  TOKEN_HEADER,
+  sessionApiPaths,
   type AgentSessionState,
   type ChatMessage,
+  type CreateSessionResult,
   type ModelConfig,
   type ModelInfo,
   type ProviderInfo,
+  type SessionSummary,
   type TestConnectionResult,
   type ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import { getToken } from './access-token';
-
 /**
- * 携带访问 token 发起请求，并把非成功响应转换为错误。
+ * 发起 HTTP 请求，并把非成功响应转换为错误。
  *
  * @param path - 接口路径
  * @param init - Fetch 请求配置
  * @returns 解析后的响应体
- * @throws 缺少 token、网络失败或本地服务返回错误
+ * @throws 网络失败或本地服务返回错误
  */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
-  if (!token) {
-    throw new Error('缺少访问 token');
-  }
-  const response = await fetch(path, {
-    ...init,
-    headers: { ...init?.headers, [TOKEN_HEADER]: token },
-  });
+  const response = await fetch(path, init);
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `请求失败(${response.status})`);
@@ -63,23 +56,29 @@ export const api = {
   listModels: (provider: string): Promise<ModelInfo[]> =>
     request(`${API_PATHS.models}?provider=${encodeURIComponent(provider)}`),
 
-  getMessages: (): Promise<ChatMessage[]> => request(API_PATHS.messages),
+  listSessions: (): Promise<SessionSummary[]> => request(API_PATHS.sessions),
 
-  getSessionState: (): Promise<AgentSessionState> => request(API_PATHS.sessionState),
+  createSession: (): Promise<CreateSessionResult> =>
+    request(API_PATHS.sessions, { method: 'POST' }),
 
-  prompt: (text: string): Promise<void> =>
-    request(API_PATHS.prompt, {
+  getMessages: (sessionId: string): Promise<ChatMessage[]> =>
+    request(sessionApiPaths(sessionId).messages),
+
+  getSessionState: (sessionId: string): Promise<AgentSessionState> =>
+    request(sessionApiPaths(sessionId).state),
+
+  prompt: (sessionId: string, text: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).prompt, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text }),
     }),
 
-  newSession: (): Promise<void> => request(API_PATHS.newSession, { method: 'POST' }),
+  abortSession: (sessionId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).abort, { method: 'POST' }),
 
-  abortSession: (): Promise<void> => request(API_PATHS.abortSession, { method: 'POST' }),
-
-  setThinkingLevel: (level: ThinkingLevel): Promise<AgentSessionState> =>
-    request(API_PATHS.thinkingLevel, {
+  setThinkingLevel: (sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> =>
+    request(sessionApiPaths(sessionId).thinkingLevel, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ level }),

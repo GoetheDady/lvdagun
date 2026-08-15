@@ -20,8 +20,29 @@ export class AgentBusyError extends Error {
   }
 }
 
+/** 请求的持久化会话不存在 */
+export class SessionNotFoundError extends Error {
+  readonly status = 404;
+
+  /**
+   * 创建会话不存在错误。
+   *
+   * @param sessionId - 请求的会话标识
+   */
+  constructor(sessionId: string) {
+    super(`会话不存在:${sessionId}`);
+    this.name = 'SessionNotFoundError';
+  }
+}
+
 /** 本地服务与 Pi Agent 会话之间的能力契约 */
 export interface HubSession {
+  /** Pi 持久化会话的不透明标识 */
+  readonly id: string;
+
+  /** 会话创建时间，Unix 毫秒时间戳 */
+  readonly createdAt: number;
+
   /**
    * 接受一条用户提示。
    *
@@ -54,14 +75,6 @@ export interface HubSession {
   getState(): AgentSessionState;
 
   /**
-   * 在 Agent 空闲时创建 Pi 新会话。
-   *
-   * @returns 新会话完成绑定后解决的 Promise
-   * @throws Agent 正在运行
-   */
-  newSession(): Promise<void>;
-
-  /**
    * 中止当前 Agent 运行并等待其稳定。
    *
    * @returns Agent 完全稳定后解决的 Promise
@@ -82,6 +95,14 @@ export interface HubSession {
    * @returns 资源释放完成后解决的 Promise
    */
   dispose(): Promise<void>;
+}
+
+/** Hub 从 Pi 会话目录读取的持久化摘要 */
+export interface StoredSessionSummary {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
 }
 
 /** Agent Hub 对本地服务提供的能力 */
@@ -111,6 +132,13 @@ export interface Hub {
   testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult>;
 
   /**
+   * 列出驴打滚数据目录中的全部持久化会话。
+   *
+   * @returns 按最后消息时间倒序排列的会话摘要
+   */
+  listSessions(): Promise<StoredSessionSummary[]>;
+
+  /**
    * 按模型配置创建会话。
    *
    * @param config - 模型配置
@@ -118,4 +146,14 @@ export interface Hub {
    * @throws 模型不存在或初始化失败
    */
   createSession(config: ModelConfig): Promise<HubSession>;
+
+  /**
+   * 按不透明标识打开一个已有持久化会话。
+   *
+   * @param config - 当前全局模型配置
+   * @param sessionId - 会话标识
+   * @returns 就绪的 Hub 会话
+   * @throws 会话不存在、模型不存在或初始化失败
+   */
+  openSession(config: ModelConfig, sessionId: string): Promise<HubSession>;
 }

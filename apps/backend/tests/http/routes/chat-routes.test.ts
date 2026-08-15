@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FileConfigStore } from '../../../src/config/config-store';
 import { AgentBusyError } from '../../../src/hub/hub';
-import { makeFakeHub, startServer, TOKEN, validConfig } from '../test-server';
+import { makeFakeHub, startServer, validConfig } from '../test-server';
 
 let dir: string;
 
@@ -26,9 +26,9 @@ describe('对话接口', () => {
       new FileConfigStore(join(dir, 'config.json'))
     );
     try {
-      const response = await fetch(`${baseUrl}/api/prompt`, {
+      const response = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '你好' }),
       });
       expect(response.status).toBe(409);
@@ -43,17 +43,17 @@ describe('对话接口', () => {
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
     try {
-      const accepted = await fetch(`${baseUrl}/api/prompt`, {
+      const accepted = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '你好' }),
       });
       expect(accepted.status).toBe(202);
 
       sessions[0]!.prompt.mockRejectedValueOnce(new AgentBusyError());
-      const busy = await fetch(`${baseUrl}/api/prompt`, {
+      const busy = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '并发消息' }),
       });
       expect(busy.status).toBe(409);
@@ -63,49 +63,41 @@ describe('对话接口', () => {
     }
   });
 
-  it('返回状态并委托中止、新会话和思考等级控制', async () => {
+  it('返回状态并委托中止、创建会话和思考等级控制', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
     try {
-      const stateResponse = await fetch(`${baseUrl}/api/session`, {
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
+      const stateResponse = await fetch(`${baseUrl}/api/sessions/session-1`);
       await expect(stateResponse.json()).resolves.toEqual({
         isRunning: false,
         thinkingLevel: 'medium',
         availableThinkingLevels: ['off', 'low', 'medium', 'high'],
       });
 
-      const thinking = await fetch(`${baseUrl}/api/session/thinking-level`, {
+      const thinking = await fetch(`${baseUrl}/api/sessions/session-1/thinking-level`, {
         method: 'PUT',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ level: 'high' }),
       });
       expect(thinking.status).toBe(200);
       await expect(thinking.json()).resolves.toMatchObject({ thinkingLevel: 'high' });
 
-      const invalidThinking = await fetch(`${baseUrl}/api/session/thinking-level`, {
+      const invalidThinking = await fetch(`${baseUrl}/api/sessions/session-1/thinking-level`, {
         method: 'PUT',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ level: 'max' }),
       });
       expect(invalidThinking.status).toBe(400);
 
-      const abort = await fetch(`${baseUrl}/api/session/abort`, {
-        method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
+      const abort = await fetch(`${baseUrl}/api/sessions/session-1/abort`, { method: 'POST' });
       expect(abort.status).toBe(204);
       expect(sessions[0]!.abortCalls).toBe(1);
 
-      const next = await fetch(`${baseUrl}/api/session/new`, {
-        method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN },
-      });
-      expect(next.status).toBe(204);
-      expect(sessions[0]!.newSessionCalls).toBe(1);
+      const next = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' });
+      expect(next.status).toBe(201);
+      await expect(next.json()).resolves.toEqual({ sessionId: 'session-2' });
     } finally {
       await close();
     }
@@ -117,9 +109,9 @@ describe('对话接口', () => {
     await store.save(validConfig);
     const { baseUrl, close } = await startServer(hub, store);
     try {
-      const response = await fetch(`${baseUrl}/api/prompt`, {
+      const response = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
-        headers: { 'x-lvdagun-token': TOKEN, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '   ' }),
       });
       expect(response.status).toBe(400);

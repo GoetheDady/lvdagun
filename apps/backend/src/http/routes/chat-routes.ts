@@ -1,6 +1,11 @@
 import type { Express } from 'express';
 
-import { API_PATHS, type ThinkingLevel } from '@lvdagun/protocol';
+import {
+  API_PATHS,
+  SESSION_API_PATHS,
+  type CreateSessionResult,
+  type ThinkingLevel,
+} from '@lvdagun/protocol';
 
 import type { SessionManager } from '../../sessions/session-manager';
 
@@ -12,37 +17,42 @@ import type { SessionManager } from '../../sessions/session-manager';
  * @returns 无返回值
  */
 export function registerChatRoutes(app: Express, sessionManager: SessionManager): void {
-  app.get(API_PATHS.messages, (_req, res) => {
-    res.json(sessionManager.getMessages());
+  app.get(API_PATHS.sessions, async (_req, res) => {
+    res.json(await sessionManager.listSessions());
   });
 
-  app.get(API_PATHS.sessionState, async (_req, res) => {
-    res.json(await sessionManager.getState());
+  app.post(API_PATHS.sessions, async (_req, res) => {
+    const result: CreateSessionResult = { sessionId: await sessionManager.createSession() };
+    res.status(201).json(result);
   });
 
-  app.post(API_PATHS.prompt, async (req, res) => {
+  app.get(SESSION_API_PATHS.messages, async (req, res) => {
+    res.json(await sessionManager.getMessages(req.params.sessionId!));
+  });
+
+  app.get(SESSION_API_PATHS.state, async (req, res) => {
+    res.json(await sessionManager.getState(req.params.sessionId!));
+  });
+
+  app.post(SESSION_API_PATHS.prompt, async (req, res) => {
     const { text } = req.body as { text?: unknown };
     if (typeof text !== 'string' || text.trim() === '') {
       res.status(400).json({ error: '消息不能为空' });
       return;
     }
-    await (await sessionManager.getSession()).prompt(text);
+    await sessionManager.prompt(req.params.sessionId!, text);
     res.status(202).end();
   });
 
-  app.post(API_PATHS.newSession, async (_req, res) => {
-    await sessionManager.newSession();
+  app.post(SESSION_API_PATHS.abort, async (req, res) => {
+    await sessionManager.abort(req.params.sessionId!);
     res.status(204).end();
   });
 
-  app.post(API_PATHS.abortSession, async (_req, res) => {
-    await sessionManager.abort();
-    res.status(204).end();
-  });
-
-  app.put(API_PATHS.thinkingLevel, async (req, res) => {
+  app.put(SESSION_API_PATHS.thinkingLevel, async (req, res) => {
     const { level } = req.body as { level?: unknown };
-    const state = await sessionManager.getState();
+    const sessionId = req.params.sessionId!;
+    const state = await sessionManager.getState(sessionId);
     if (
       typeof level !== 'string' ||
       !state.availableThinkingLevels.includes(level as ThinkingLevel)
@@ -50,6 +60,6 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       res.status(400).json({ error: '当前模型不支持该思考等级' });
       return;
     }
-    res.json(await sessionManager.setThinkingLevel(level as ThinkingLevel));
+    res.json(await sessionManager.setThinkingLevel(sessionId, level as ThinkingLevel));
   });
 }

@@ -11,7 +11,6 @@ import { join } from 'node:path';
 
 import { DEFAULT_SERVICE_PORT, DEV_WEB_PORT, SERVICE_HOST } from '@lvdagun/protocol';
 
-import { getOrCreateToken } from './auth/access-token';
 import { FileConfigStore } from './config/config-store';
 import { CONFIG_FILE, DATA_DIR } from './config/paths';
 import { createHub } from './hub/create-hub';
@@ -34,25 +33,23 @@ switch (command) {
 }
 
 /**
- * 启动本地服务:生成/复用 token,监听端口,写 pid 文件,自动打开浏览器。
+ * 启动本地服务:监听端口,写 pid 文件,自动打开浏览器。
  */
 async function serve(): Promise<void> {
   const isDev = process.env.LVDAGUN_DEV === '1';
   const port = parsePort();
-  const token = await getOrCreateToken(DATA_DIR);
 
   // 生产模式托管 web 构建产物;dev 模式页面由 vite 提供,只开 API
   const webDist = join(import.meta.dirname, '../../web/dist');
   const app = createServer({
     configStore: new FileConfigStore(CONFIG_FILE),
     hub: createHub({ dataDir: DATA_DIR }),
-    token,
     webDist: !isDev && existsSync(webDist) ? webDist : undefined,
   });
 
   const server = app.listen(port, SERVICE_HOST, () => {
     const webPort = isDev ? DEV_WEB_PORT : port;
-    const url = `http://${SERVICE_HOST}:${webPort}/?token=${token}`;
+    const url = `http://${SERVICE_HOST}:${webPort}/`;
     console.log(`驴打滚已启动:${url}`);
     void writeFile(PID_FILE, String(process.pid), { mode: 0o600 });
     openBrowser(url);
@@ -118,7 +115,7 @@ function parsePort(): number {
 /**
  * 用系统默认浏览器打开页面。
  *
- * @param url - 带 token 的完整地址(web 端读取一次后存入 localStorage)
+ * @param url - 客户端完整地址
  */
 function openBrowser(url: string): void {
   const platform = process.platform;

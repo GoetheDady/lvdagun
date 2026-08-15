@@ -16,6 +16,8 @@ import { toJsonAgentEvent } from './pi-json-event';
 
 /** 使用 Pi AgentSessionRuntime 的 Hub 会话实现 */
 export class PiHubSession implements HubSession {
+  readonly id: string;
+  readonly createdAt: number;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private unsubscribeSession: (() => void) | null = null;
 
@@ -25,6 +27,8 @@ export class PiHubSession implements HubSession {
    * @param runtime - 可替换当前 AgentSession 的 Pi Runtime
    */
   constructor(private readonly runtime: AgentSessionRuntime) {
+    this.id = runtime.session.sessionId;
+    this.createdAt = Date.now();
     this.bindSession(runtime.session);
     runtime.setRebindSession(async (session) => {
       this.bindSession(session);
@@ -104,19 +108,6 @@ export class PiHubSession implements HubSession {
       thinkingLevel: session.thinkingLevel,
       availableThinkingLevels: [...session.getAvailableThinkingLevels()],
     };
-  }
-
-  /**
-   * 在 Agent 空闲时创建 Pi 新会话。
-   *
-   * @returns 新会话完成绑定后解决的 Promise
-   * @throws Agent 正在运行
-   */
-  async newSession(): Promise<void> {
-    if (!this.runtime.session.isIdle) {
-      throw new AgentBusyError();
-    }
-    await this.runtime.newSession();
   }
 
   /**

@@ -38,7 +38,7 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
       </div>
       {props.testResult && (
         <p
-          className={`flex items-center gap-1.5 text-sm ${props.testResult.ok ? 'text-green-600' : 'text-destructive'}`}
+          className={`flex items-center gap-1.5 text-sm ${props.testResult.ok ? 'text-primary' : 'text-destructive'}`}
         >
           {props.testResult.ok ? <Check className="size-4" /> : null}
           {props.testResult.ok ? '连接成功' : props.testResult.message}

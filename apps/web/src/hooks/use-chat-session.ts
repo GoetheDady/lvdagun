@@ -66,7 +66,6 @@ export interface ChatSessionState {
   loading: boolean;
   sending: boolean;
   aborting: boolean;
-  creatingSession: boolean;
   settingThinkingLevel: boolean;
   error: ChatError | null;
 }
@@ -83,7 +82,6 @@ export const initialState: ChatSessionState = {
   loading: true,
   sending: false,
   aborting: false,
-  creatingSession: false,
   settingThinkingLevel: false,
   error: null,
 };
@@ -97,8 +95,6 @@ export type ChatSessionAction =
   | { type: 'send_finished' }
   | { type: 'abort_started' }
   | { type: 'abort_finished' }
-  | { type: 'new_session_started' }
-  | { type: 'new_session_finished'; session: AgentSessionState }
   | { type: 'thinking_level_started' }
   | { type: 'thinking_level_finished'; session: AgentSessionState }
   | { type: 'operation_failed'; message: string; retryable: boolean };
@@ -117,8 +113,9 @@ export function getMessageText(message: ChatMessage): string {
     return message.content;
   }
   return message.content
-    .filter((content): content is Extract<(typeof message.content)[number], { type: 'text' }> =>
-      content.type === 'text'
+    .filter(
+      (content): content is Extract<(typeof message.content)[number], { type: 'text' }> =>
+        content.type === 'text'
     )
     .map((content) => content.text)
     .join('\n');
@@ -446,16 +443,6 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
       return { ...state, aborting: true, error: null };
     case 'abort_finished':
       return { ...state, aborting: false };
-    case 'new_session_started':
-      return { ...state, creatingSession: true, error: null };
-    case 'new_session_finished':
-      return {
-        ...initialState,
-        loading: false,
-        creatingSession: false,
-        session: action.session,
-        isRunning: action.session.isRunning,
-      };
     case 'thinking_level_started':
       return { ...state, settingThinkingLevel: true, error: null };
     case 'thinking_level_finished':
@@ -471,7 +458,6 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         loading: false,
         sending: false,
         aborting: false,
-        creatingSession: false,
         settingThinkingLevel: false,
         error: { message: action.message, retryable: action.retryable },
       };
@@ -501,12 +487,6 @@ export interface ChatSession {
    */
   abort(): Promise<void>;
   /**
-   * 使用 Pi 原生能力创建新会话。
-   *
-   * @returns 新会话就绪后解决的 Promise
-   */
-  newSession(): Promise<void>;
-  /**
    * 设置 Pi 当前思考等级。
    *
    * @param level - 当前模型声明支持的思考等级
@@ -518,9 +498,10 @@ export interface ChatSession {
 /**
  * 连接 HTTP 与 SSE，并向对话页提供结构化 Pi 会话状态。
  *
+ * @param sessionId - 当前 URL 选择的会话标识
  * @returns 会话状态和可执行操作
  */
-export function useChatSession(): ChatSession {
+export function useChatSession(sessionId: string): ChatSession {
   const [state, dispatch] = useReducer(chatReducer, initialState);
 
   useEffect(() => {
@@ -528,16 +509,20 @@ export function useChatSession(): ChatSession {
     let unsubscribe: (() => void) | null = null;
     void (async () => {
       try {
-        const [messages, session] = await Promise.all([api.getMessages(), api.getSessionState()]);
+        const [messages, session] = await Promise.all([
+          api.getMessages(sessionId),
+          api.getSessionState(sessionId),
+        ]);
         if (cancelled) {
           return;
         }
         dispatch({ type: 'initialized', messages, session });
         unsubscribe = subscribeEvents(
+          sessionId,
           (event) => {
             dispatch({ type: 'pi_event', event, receivedAt: Date.now() });
             if (event.type === 'compaction_end' && event.result && !event.aborted) {
-              void api.getMessages().then((history) => {
+              void api.getMessages(sessionId).then((history) => {
                 if (!cancelled) {
                   dispatch({ type: 'history_loaded', messages: history });
                 }
@@ -567,7 +552,7 @@ export function useChatSession(): ChatSession {
       cancelled = true;
       unsubscribe?.();
     };
-  }, []);
+  }, [sessionId]);
 
   const send = useCallback(
     async (text: string): Promise<void> => {
@@ -576,7 +561,7 @@ export function useChatSession(): ChatSession {
       }
       dispatch({ type: 'send_started' });
       try {
-        await api.prompt(text);
+        await api.prompt(sessionId, text);
         dispatch({ type: 'send_finished' });
       } catch (error) {
         dispatch({
@@ -586,7 +571,7 @@ export function useChatSession(): ChatSession {
         });
       }
     },
-    [state.isRunning, state.sending]
+    [sessionId, state.isRunning, state.sending]
   );
 
   const retry = useCallback((): void => {
@@ -607,7 +592,7 @@ export function useChatSession(): ChatSession {
     }
     dispatch({ type: 'abort_started' });
     try {
-      await api.abortSession();
+      await api.abortSession(sessionId);
       dispatch({ type: 'abort_finished' });
     } catch (error) {
       dispatch({
@@ -616,25 +601,7 @@ export function useChatSession(): ChatSession {
         retryable: false,
       });
     }
-  }, [state.aborting, state.isRunning]);
-
-  const newSession = useCallback(async (): Promise<void> => {
-    if (state.isRunning || state.creatingSession) {
-      return;
-    }
-    dispatch({ type: 'new_session_started' });
-    try {
-      await api.newSession();
-      const session = await api.getSessionState();
-      dispatch({ type: 'new_session_finished', session });
-    } catch (error) {
-      dispatch({
-        type: 'operation_failed',
-        message: error instanceof Error ? error.message : String(error),
-        retryable: false,
-      });
-    }
-  }, [state.creatingSession, state.isRunning]);
+  }, [sessionId, state.aborting, state.isRunning]);
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
@@ -643,7 +610,7 @@ export function useChatSession(): ChatSession {
       }
       dispatch({ type: 'thinking_level_started' });
       try {
-        const session = await api.setThinkingLevel(level);
+        const session = await api.setThinkingLevel(sessionId, level);
         dispatch({ type: 'thinking_level_finished', session });
       } catch (error) {
         dispatch({
@@ -653,8 +620,8 @@ export function useChatSession(): ChatSession {
         });
       }
     },
-    [state.session?.thinkingLevel, state.settingThinkingLevel]
+    [sessionId, state.session?.thinkingLevel, state.settingThinkingLevel]
   );
 
-  return { state, send, retry, abort, newSession, setThinkingLevel };
+  return { state, send, retry, abort, setThinkingLevel };
 }

@@ -1,6 +1,4 @@
-/**
- * @file 渲染入口:读取一次性 token 后挂载 React 应用。
- */
+/** @file 客户端渲染入口 */
 import './styles/main.css';
 import 'streamdown/styles.css';
 
@@ -9,10 +7,6 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 
 import App from './app';
-import { initTokenFromUrl } from './services/access-token';
-
-// 本地服务打开的 URL 带 ?token=xxx:读一次存 localStorage 并抹掉地址栏
-initTokenFromUrl();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

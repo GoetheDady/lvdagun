@@ -8,6 +8,26 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom 未实现 ResizeObserver,可调整面板挂载时依赖浏览器提供该接口
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class ResizeObserver {
+    disconnect(): void {}
+
+    observe(): void {}
+
+    unobserve(): void {}
+  };
+}
+
+// jsdom 中所有元素矩形都是零,否则面板库会把任意点击误判为分隔条拖动
+const getBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+HTMLElement.prototype.getBoundingClientRect = function getTestBoundingClientRect(): DOMRect {
+  if (this.getAttribute('role') === 'separator') {
+    return DOMRect.fromRect({ x: 256, y: 0, width: 1, height: 768 });
+  }
+  return getBoundingClientRect.call(this);
+};
+
 afterEach(() => {
   cleanup();
 });
