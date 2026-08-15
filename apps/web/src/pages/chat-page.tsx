@@ -177,7 +177,7 @@ function ChatWorkspace({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-5">
+      <header className="flex h-14 shrink-0 items-center gap-3 px-5">
         <div className="mr-auto min-w-0">
           <h2 className="truncate text-sm font-semibold">新对话</h2>
           <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -191,7 +191,7 @@ function ChatWorkspace({
         </div>
 
         {state.session ? (
-          <label className="flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs text-muted-foreground">
+          <label className="flex h-8 items-center gap-1.5 rounded-md bg-muted/70 px-2 text-xs text-muted-foreground">
             <span>思考</span>
             <select
               aria-label="思考等级"
@@ -224,7 +224,7 @@ function ChatWorkspace({
                   <button
                     key={suggestion}
                     type="button"
-                    className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="rounded-md bg-muted/70 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                     onClick={() => setInput(suggestion)}
                   >
                     {suggestion}
@@ -258,7 +258,7 @@ function ChatWorkspace({
         </div>
       </section>
 
-      <footer className="shrink-0 border-t bg-background px-5 py-3">
+      <footer className="shrink-0 bg-background px-5 py-3">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <textarea
             className="max-h-40 min-h-11 flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2.5 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

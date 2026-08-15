@@ -58,9 +58,18 @@ export function WizardCard(props: { onDone: () => void }): React.JSX.Element {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          驴打滚
-          <span className="text-sm font-normal text-muted-foreground">
+        <CardTitle className="flex items-center justify-between gap-3">
+          <span className="flex min-w-0 items-center gap-2">
+            <img
+              alt=""
+              className="size-7 shrink-0 rounded-md"
+              height="28"
+              src="/brand/logo-512.png"
+              width="28"
+            />
+            <span className="truncate">驴打滚</span>
+          </span>
+          <span className="shrink-0 text-sm font-normal text-muted-foreground">
             {step} / 3 · {STEP_TITLES[step]}
           </span>
         </CardTitle>

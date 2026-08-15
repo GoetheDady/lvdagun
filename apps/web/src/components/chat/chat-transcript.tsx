@@ -165,12 +165,12 @@ function ThinkingBlock(props: {
 
   return (
     <details
-      className="group border-l-2 border-soy/60 pl-3 text-muted-foreground"
+      className="group text-muted-foreground"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-xs font-medium">
-        <Brain className="size-3.5" />
+        <Brain className="size-3.5 text-soy-foreground" />
         {props.streaming ? '正在思考' : '思考过程'}
         <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
       </summary>
@@ -204,11 +204,11 @@ function ToolRun(props: {
 
   return (
     <details
-      className={`group overflow-hidden rounded-md border ${status === 'error' ? 'border-destructive/50' : 'border-border'}`}
+      className={`group overflow-hidden rounded-md bg-muted/55 ${status === 'error' ? 'text-destructive ring-1 ring-destructive/35' : ''}`}
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 bg-muted/60 px-3 py-2 text-xs">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
         <Wrench className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate font-medium">{props.toolCall.name}</span>
         <span className={status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>
@@ -217,7 +217,7 @@ function ToolRun(props: {
         <StatusIcon className={`size-3.5 ${status === 'running' ? 'animate-spin' : ''}`} />
         <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
       </summary>
-      <div className="space-y-3 border-t px-3 py-2.5 text-xs">
+      <div className="space-y-3 bg-background/45 px-3 py-2.5 text-xs">
         <div>
           <p className="mb-1 font-medium text-muted-foreground">参数</p>
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-background p-2 font-mono leading-5">
@@ -310,7 +310,7 @@ function AssistantMessage(props: {
             {props.message.provider} / {props.message.responseModel ?? props.message.model}
             <ChevronRight className="size-3 transition-transform group-open:rotate-90" />
           </summary>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-l pl-3">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted/50 p-3">
             <dt>时间</dt>
             <dd>{formatTime(props.message.timestamp)}</dd>
             <dt>模型</dt>
@@ -341,13 +341,13 @@ function AssistantMessage(props: {
  */
 function OrphanToolResult(props: { message: ToolResultChatMessage }): React.JSX.Element {
   return (
-    <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md border" open>
-      <summary className="flex cursor-pointer list-none items-center gap-2 bg-muted/60 px-3 py-2 text-xs">
+    <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md bg-muted/55" open>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
         <FileTerminal className="size-3.5" />
         <span className="flex-1 font-medium">{props.message.toolName}</span>
         {props.message.isError ? '执行失败' : '执行结果'}
       </summary>
-      <div className="border-t px-3 py-2">
+      <div className="bg-background/45 px-3 py-2">
         <MessageContent content={props.message.content} />
       </div>
     </details>
@@ -369,7 +369,7 @@ function SpecialMessage(props: {
   }
   if (message.role === 'branchSummary') {
     return (
-      <details className="max-w-[min(94%,48rem)] border-l-2 pl-3 text-xs text-muted-foreground">
+      <details className="max-w-[min(94%,48rem)] rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
         <summary className="cursor-pointer py-1 font-medium">分支摘要</summary>
         <p className="whitespace-pre-wrap py-2 leading-5">{message.summary}</p>
       </details>
@@ -377,11 +377,11 @@ function SpecialMessage(props: {
   }
   if (message.role === 'bashExecution') {
     return (
-      <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md border" open>
-        <summary className="cursor-pointer bg-muted/60 px-3 py-2 font-mono text-xs">
+      <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md bg-muted/55" open>
+        <summary className="cursor-pointer px-3 py-2 font-mono text-xs">
           $ {message.command}
         </summary>
-        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-t p-3 text-xs leading-5">
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all bg-background/45 p-3 text-xs leading-5">
           {message.output}
         </pre>
       </details>
@@ -391,11 +391,11 @@ function SpecialMessage(props: {
     return null;
   }
   return (
-    <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md border" open>
-      <summary className="cursor-pointer bg-muted/60 px-3 py-2 text-xs font-medium">
+    <details className="max-w-[min(94%,48rem)] overflow-hidden rounded-md bg-muted/55" open>
+      <summary className="cursor-pointer px-3 py-2 text-xs font-medium">
         {message.customType}
       </summary>
-      <div className="border-t px-3 py-2">
+      <div className="bg-background/45 px-3 py-2">
         <MessageContent content={message.content} markdown />
       </div>
     </details>
@@ -409,11 +409,12 @@ function SpecialMessage(props: {
  */
 function CompactionDivider(): React.JSX.Element {
   return (
-    <div className="flex items-center gap-3 py-1 text-xs text-muted-foreground" role="separator">
-      <span className="h-px flex-1 bg-border" />
+    <div
+      className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground"
+      role="separator"
+    >
       <Check className="size-3.5 text-primary" />
       <span>压缩成功</span>
-      <span className="h-px flex-1 bg-border" />
     </div>
   );
 }
@@ -453,7 +454,7 @@ function RetryNotice(props: { record: RetryRecord }): React.JSX.Element {
 
   return (
     <details
-      className={`max-w-[min(94%,48rem)] rounded-md border px-3 py-2 text-xs ${failed ? 'border-destructive/50 text-destructive' : 'text-muted-foreground'}`}
+      className={`max-w-[min(94%,48rem)] rounded-md bg-muted/55 px-3 py-2 text-xs ${failed ? 'text-destructive ring-1 ring-destructive/35' : 'text-muted-foreground'}`}
       open={!complete}
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
@@ -467,7 +468,7 @@ function RetryNotice(props: { record: RetryRecord }): React.JSX.Element {
         {title}
         <ChevronRight className="ml-auto size-3.5" />
       </summary>
-      <p className="mt-2 border-t pt-2 leading-5">{props.record.errorMessage}</p>
+      <p className="mt-2 rounded bg-background/45 p-2 leading-5">{props.record.errorMessage}</p>
     </details>
   );
 }
