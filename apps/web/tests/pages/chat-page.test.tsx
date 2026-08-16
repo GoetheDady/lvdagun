@@ -186,11 +186,111 @@ describe('ChatPage', () => {
       id: 'gpt-a',
     });
     expect(input).toHaveValue('保留这段草稿');
-    expect(within(composer).getByRole('combobox', { name: '思考等级' })).toBeInTheDocument();
+    expect(within(composer).getByRole('slider', { name: '思考等级' })).toBeInTheDocument();
     expect(within(composer).getByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
-  it('发送、中止和思考等级操作都携带当前 session id', async () => {
+  it('通过离散滑块提交当前模型支持的思考等级', async () => {
+    renderChatPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    expect(slider).toHaveAttribute('aria-valuetext', '中');
+    slider.focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(api.setThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(api.setThinkingLevel).toHaveBeenCalledWith('session-a', 'high');
+  });
+
+  it('提交思考等级期间保留预览并禁用滑块', async () => {
+    let resolveThinkingLevel!: (state: AgentSessionState) => void;
+    vi.mocked(api.setThinkingLevel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveThinkingLevel = resolve;
+        })
+    );
+    renderChatPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    slider.focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    await waitFor(() => expect(slider).toHaveAttribute('aria-disabled', 'true'));
+    expect(slider).toHaveAttribute('aria-valuetext', '高');
+
+    act(() => resolveThinkingLevel({ ...sessionState, thinkingLevel: 'high' }));
+    await waitFor(() => expect(slider).toHaveAttribute('aria-disabled', 'false'));
+    expect(slider).toHaveAttribute('aria-valuetext', '高');
+  });
+
+  it('思考等级提交失败后回退到服务端权威状态', async () => {
+    vi.mocked(api.setThinkingLevel).mockRejectedValueOnce(new Error('思考等级更新失败'));
+    renderChatPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    slider.focus();
+    await userEvent.keyboard('{ArrowRight}');
+
+    expect(await screen.findByText('思考等级更新失败')).toBeInTheDocument();
+    await waitFor(() => expect(slider).toHaveAttribute('aria-valuetext', '中'));
+    expect(slider).toHaveAttribute('aria-disabled', 'false');
+  });
+
+  it('通过 SSE 同步其他客户端修改的思考等级', async () => {
+    renderChatPage();
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+
+    act(() => captured.onEvent!({ type: 'thinking_level_changed', level: 'high' }));
+
+    expect(slider).toHaveAttribute('aria-valuetext', '高');
+    expect(api.setThinkingLevel).not.toHaveBeenCalled();
+  });
+
+  it('模型 SSE 更新会清除旧模型的思考等级预览', async () => {
+    let resolveThinkingLevel!: (state: AgentSessionState) => void;
+    vi.mocked(api.setThinkingLevel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveThinkingLevel = resolve;
+        })
+    );
+    renderChatPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    slider.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(slider).toHaveAttribute('aria-valuetext', '高');
+
+    const changedSession = {
+      ...sessionState,
+      model: sessionState.availableModels[1]!,
+    };
+    act(() => captured.onEvent!({ type: 'session_model_changed', state: changedSession }));
+
+    const updatedSlider = screen.getByRole('slider', { name: '思考等级' });
+    expect(updatedSlider).toHaveAttribute('aria-valuetext', '中');
+
+    act(() => resolveThinkingLevel(changedSession));
+    await waitFor(() => expect(updatedSlider).toHaveAttribute('aria-disabled', 'false'));
+  });
+
+  it('只有关闭等级时保留并禁用思考等级滑块', async () => {
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      ...sessionState,
+      thinkingLevel: 'off',
+      availableThinkingLevels: ['off'],
+    });
+    renderChatPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    expect(slider).toHaveAttribute('aria-valuetext', '关闭');
+    expect(slider).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText('关闭')).toBeInTheDocument();
+  });
+
+  it('发送和中止操作都携带当前 session id', async () => {
     renderChatPage();
     const input = screen.getByPlaceholderText('输入消息');
     await waitFor(() => expect(input).toBeEnabled());
@@ -201,11 +301,6 @@ describe('ChatPage', () => {
     act(() => captured.onEvent!({ type: 'agent_start' }));
     await userEvent.click(screen.getByRole('button', { name: '停止' }));
     expect(api.abortSession).toHaveBeenCalledWith('session-a');
-
-    act(() => captured.onEvent!({ type: 'agent_settled' }));
-    const selector = await screen.findByRole('combobox', { name: '思考等级' });
-    await userEvent.selectOptions(selector, 'high');
-    expect(api.setThinkingLevel).toHaveBeenCalledWith('session-a', 'high');
   });
 
   it('刷新时恢复自动压缩状态并允许停止压缩', async () => {
@@ -218,6 +313,10 @@ describe('ChatPage', () => {
 
     expect(await screen.findByText('压缩中')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('正在压缩上下文')).toBeInTheDocument();
+    expect(screen.getByRole('slider', { name: '思考等级' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
     await userEvent.click(screen.getByRole('button', { name: '停止压缩' }));
     expect(api.abortSession).toHaveBeenCalledWith('session-a');
   });

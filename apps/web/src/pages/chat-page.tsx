@@ -3,11 +3,10 @@ import { Navigate, useNavigate, useParams } from 'react-router';
 import { Loader2, RotateCcw, Send, Square } from 'lucide-react';
 import { useDefaultLayout } from 'react-resizable-panels';
 
-import type { ThinkingLevel } from '@lvdagun/protocol';
-
 import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
+import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useChatSession } from '@/hooks/use-chat-session';
@@ -18,17 +17,6 @@ const SUGGESTIONS = ['总结今天的重要新闻', '帮我检查一个本地项
 
 /** 会话侧栏布局在浏览器中的稳定标识。 */
 const CHAT_LAYOUT_ID = 'chat-workspace-layout';
-
-/** Pi 思考等级的中文标签。 */
-const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  off: '关闭思考',
-  minimal: '最少',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '极高',
-  max: '最高',
-};
 
 /**
  * 从 URL 解析当前会话，并在会话变化时重建客户端状态。
@@ -167,16 +155,6 @@ function ChatWorkspace({
     void send(text);
   };
 
-  /**
-   * 更新当前会话的思考等级。
-   *
-   * @param level - 当前模型支持的思考等级字符串
-   * @returns 无返回值
-   */
-  const handleThinkingLevelChange = (level: string): void => {
-    void setThinkingLevel(level as ThinkingLevel);
-  };
-
   const inputPlaceholder = anotherRunningSession
     ? '另一个会话正在运行'
     : state.compaction?.status === 'running'
@@ -291,27 +269,15 @@ function ChatWorkspace({
                     loading={state.settingModel}
                     onSelect={(model) => void setModel(model)}
                   />
-                  <label className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted">
-                    <span>思考</span>
-                    <select
-                      aria-label="思考等级"
-                      className="max-w-20 bg-transparent text-foreground outline-none"
-                      value={state.session.thinkingLevel}
-                      disabled={
-                        state.isRunning || state.settingModel || state.settingThinkingLevel
-                      }
-                      onChange={(event) => handleThinkingLevelChange(event.target.value)}
-                    >
-                      {state.session.availableThinkingLevels.map((level) => (
-                        <option key={level} value={level}>
-                          {THINKING_LEVEL_LABELS[level]}
-                        </option>
-                      ))}
-                    </select>
-                    {state.settingThinkingLevel ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : null}
-                  </label>
+                  {/* 模型切换时重建 Slider，避免旧模型预览覆盖新模型的权威状态。 */}
+                  <ThinkingLevelSlider
+                    key={`${state.session.model.provider}:${state.session.model.id}`}
+                    value={state.session.thinkingLevel}
+                    levels={state.session.availableThinkingLevels}
+                    disabled={state.isRunning || state.settingModel}
+                    loading={state.settingThinkingLevel}
+                    onCommit={setThinkingLevel}
+                  />
                 </>
               ) : null}
               {state.isRunning ? (
