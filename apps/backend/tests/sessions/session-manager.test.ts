@@ -7,14 +7,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentSessionState,
   AgentStreamEvent,
+  AvailableModel,
   ChatMessage,
   ModelConfig,
+  ModelReference,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
 import { FileConfigStore } from '../../src/config/config-store';
 import { AgentBusyError, type Hub, type HubSession } from '../../src/hub/hub';
 import { createSessionManager, NotConfiguredError } from '../../src/sessions/session-manager';
+
+const availableModels: AvailableModel[] = [
+  {
+    provider: 'anthropic',
+    providerName: 'Anthropic',
+    id: 'claude-a',
+    name: 'Claude A',
+  },
+  { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+];
 
 /** 按 id 模拟一个可控的持久化 Hub 会话。 */
 class FakeSession implements HubSession {
@@ -32,8 +44,12 @@ class FakeSession implements HubSession {
   readonly dispose = vi.fn(async (): Promise<void> => {});
   state: AgentSessionState = {
     isRunning: false,
+    activeCompaction: null,
     thinkingLevel: 'medium',
     availableThinkingLevels: ['off', 'medium', 'high'],
+    model: availableModels[0]!,
+    availableModels,
+    modelWarning: null,
   };
 
   /** @param id - 会话标识 */
@@ -59,6 +75,18 @@ class FakeSession implements HubSession {
   async setThinkingLevel(level: ThinkingLevel): Promise<AgentSessionState> {
     this.state = { ...this.state, thinkingLevel: level };
     return this.getState();
+  }
+
+  /** @param reference - 模型引用 @returns 更新后的状态 */
+  async setModel(reference: ModelReference): Promise<AgentSessionState> {
+    const model = availableModels.find(
+      (candidate) => candidate.provider === reference.provider && candidate.id === reference.id
+    );
+    if (!model) throw new Error('模型不可用');
+    this.state = { ...this.state, model };
+    const state = this.getState();
+    this.emit({ type: 'session_model_changed', state });
+    return state;
   }
 
   /** @param event - 测试事件 */
@@ -152,6 +180,10 @@ describe('createSessionManager', () => {
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
     const unsubscribe = await manager.subscribe(sessionId, listener);
 
+    expect(listener).toHaveBeenNthCalledWith(1, {
+      type: 'session_state',
+      state: sessions.get(sessionId)!.state,
+    });
     sessions.get(sessionId)!.emit({ type: 'agent_start' });
     expect(listener).toHaveBeenCalledWith({ type: 'agent_start' });
     expect((await manager.listSessions())[0]).toMatchObject({ id: sessionId, isRunning: false });

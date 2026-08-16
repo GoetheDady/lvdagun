@@ -19,6 +19,7 @@ vi.mock('@/services/api-client', () => ({
     prompt: vi.fn(),
     abortSession: vi.fn(),
     setThinkingLevel: vi.fn(),
+    setSessionModel: vi.fn(),
   },
 }));
 
@@ -49,8 +50,24 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue({
     isRunning: false,
+    activeCompaction: null,
     thinkingLevel: 'medium',
     availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+    model: {
+      provider: 'anthropic',
+      providerName: 'Anthropic',
+      id: 'claude-a',
+      name: 'Claude A',
+    },
+    availableModels: [
+      {
+        provider: 'anthropic',
+        providerName: 'Anthropic',
+        id: 'claude-a',
+        name: 'Claude A',
+      },
+    ],
+    modelWarning: null,
   });
   vi.mocked(api.listProviders).mockResolvedValue([]);
 });

@@ -18,6 +18,7 @@ vi.mock('@/services/api-client', () => ({
     prompt: vi.fn(),
     abortSession: vi.fn(),
     setThinkingLevel: vi.fn(),
+    setSessionModel: vi.fn(),
   },
 }));
 
@@ -47,8 +48,25 @@ import { api } from '@/services/api-client';
 
 const sessionState: AgentSessionState = {
   isRunning: false,
+  activeCompaction: null,
   thinkingLevel: 'medium',
   availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+  model: {
+    provider: 'anthropic',
+    providerName: 'Anthropic',
+    id: 'claude-a',
+    name: 'Claude A',
+  },
+  availableModels: [
+    {
+      provider: 'anthropic',
+      providerName: 'Anthropic',
+      id: 'claude-a',
+      name: 'Claude A',
+    },
+    { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+  ],
+  modelWarning: null,
 };
 
 /**
@@ -97,6 +115,9 @@ beforeEach(() => {
   vi.mocked(api.prompt).mockResolvedValue(undefined);
   vi.mocked(api.abortSession).mockResolvedValue(undefined);
   vi.mocked(api.setThinkingLevel).mockResolvedValue(stateCopy({ thinkingLevel: 'high' }));
+  vi.mocked(api.setSessionModel).mockResolvedValue(
+    stateCopy({ model: sessionState.availableModels[1]! })
+  );
 });
 
 describe('chatReducer', () => {
@@ -105,6 +126,37 @@ describe('chatReducer', () => {
     expect(initialState.activeAssistant).toBeNull();
     expect(initialState.loading).toBe(true);
     expect(initialState.retries).toEqual([]);
+  });
+
+  it('初始化时恢复服务端仍在进行的自动压缩', () => {
+    const state = chatReducer(initialState, {
+      type: 'initialized',
+      messages: [],
+      session: stateCopy({
+        isRunning: true,
+        activeCompaction: { reason: 'threshold' },
+      }),
+    });
+
+    expect(state.isRunning).toBe(true);
+    expect(state.compaction).toEqual({ status: 'running', reason: 'threshold' });
+  });
+
+  it('用 SSE 初始快照覆盖 HTTP 初始化期间过期的会话状态', () => {
+    const stale = chatReducer(initialState, {
+      type: 'initialized',
+      messages: [],
+      session: sessionState,
+    });
+    const current = stateCopy({ model: sessionState.availableModels[1]! });
+
+    const state = chatReducer(stale, {
+      type: 'pi_event',
+      event: { type: 'session_state', state: current },
+      receivedAt: 1,
+    });
+
+    expect(state.session).toBe(current);
   });
 
   it('message_start/update/end 完整归并文本增量', () => {
@@ -283,8 +335,44 @@ describe('useChatSession', () => {
     act(() => captured.onEvent!({ type: 'agent_start' }));
     await act(async () => result.current.send('插队消息'));
     expect(api.prompt).not.toHaveBeenCalled();
+    await act(async () => result.current.setThinkingLevel('high'));
+    await act(async () => result.current.setModel({ provider: 'openai', id: 'gpt-a' }));
+    expect(api.setThinkingLevel).not.toHaveBeenCalled();
+    expect(api.setSessionModel).not.toHaveBeenCalled();
     await act(async () => result.current.abort());
     expect(api.abortSession).toHaveBeenCalledWith('session-a');
+  });
+
+  it('自动压缩完成后重新读取包含摘要的展示历史', async () => {
+    const summary: ChatMessage = {
+      role: 'compactionSummary',
+      summary: '压缩摘要',
+      tokensBefore: 100,
+      timestamp: 2,
+    };
+    vi.mocked(api.getMessages).mockResolvedValueOnce([]).mockResolvedValueOnce([summary]);
+    const { result } = renderHook(() => useChatSession('session-a'));
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+
+    act(() => {
+      captured.onEvent!({ type: 'compaction_start', reason: 'threshold' });
+      captured.onEvent!({
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: {
+          summary: '压缩摘要',
+          firstKeptEntryId: 'entry-1',
+          tokensBefore: 100,
+          estimatedTokensAfter: 20,
+        },
+        aborted: false,
+        willRetry: false,
+      });
+    });
+
+    await waitFor(() => expect(result.current.state.messages).toEqual([summary]));
+    expect(result.current.state.compaction).toBeNull();
+    expect(api.getMessages).toHaveBeenCalledTimes(2);
   });
 
   it('重试最后一条用户消息，并按会话设置思考等级', async () => {
@@ -296,5 +384,27 @@ describe('useChatSession', () => {
     await waitFor(() => expect(api.prompt).toHaveBeenCalledWith('session-a', '你好'));
     await act(async () => result.current.setThinkingLevel('high'));
     expect(api.setThinkingLevel).toHaveBeenCalledWith('session-a', 'high');
+  });
+
+  it('切换会话模型并接受其他客户端广播的模型状态', async () => {
+    const { result } = renderHook(() => useChatSession('session-a'));
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+
+    await act(async () =>
+      result.current.setModel({ provider: 'openai', id: 'gpt-a' })
+    );
+    expect(api.setSessionModel).toHaveBeenCalledWith('session-a', {
+      provider: 'openai',
+      id: 'gpt-a',
+    });
+    expect(result.current.state.session?.model.id).toBe('gpt-a');
+
+    act(() =>
+      captured.onEvent!({
+        type: 'session_model_changed',
+        state: stateCopy({ model: sessionState.availableModels[0]! }),
+      })
+    );
+    expect(result.current.state.session?.model.id).toBe('claude-a');
   });
 });

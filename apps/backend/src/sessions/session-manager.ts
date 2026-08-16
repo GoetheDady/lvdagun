@@ -6,6 +6,7 @@ import type {
   AgentStreamEvent,
   ChatMessage,
   ModelConfig,
+  ModelReference,
   SessionSummary,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -73,7 +74,16 @@ export interface SessionManager {
   setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<AgentSessionState>;
 
   /**
-   * 订阅指定会话的 Pi JSON 事件。
+   * 设置指定会话后续 Agent 运行使用的模型。
+   *
+   * @param sessionId - 会话标识
+   * @param model - 跨 Provider 模型引用
+   * @returns 设置后的权威会话状态
+   */
+  setModel(sessionId: string, model: ModelReference): Promise<AgentSessionState>;
+
+  /**
+   * 订阅指定会话事件;注册后首先投递一份权威会话状态。
    *
    * @param sessionId - 会话标识
    * @param listener - 事件监听器
@@ -275,12 +285,17 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       return (await getRecord(sessionId)).session.setThinkingLevel(level);
     },
 
+    async setModel(sessionId: string, model: ModelReference): Promise<AgentSessionState> {
+      return (await getRecord(sessionId)).session.setModel(model);
+    },
+
     async subscribe(
       sessionId: string,
       listener: (event: AgentStreamEvent) => void
     ): Promise<() => void> {
       const record = await getRecord(sessionId);
       record.listeners.add(listener);
+      listener({ type: 'session_state', state: record.session.getState() });
       return () => record.listeners.delete(listener);
     },
 

@@ -22,6 +22,7 @@ export const SESSION_API_PATHS = {
   messages: `${API_PATHS.sessions}/:sessionId/messages`,
   prompt: `${API_PATHS.sessions}/:sessionId/prompt`,
   abort: `${API_PATHS.sessions}/:sessionId/abort`,
+  model: `${API_PATHS.sessions}/:sessionId/model`,
   thinkingLevel: `${API_PATHS.sessions}/:sessionId/thinking-level`,
   events: `${API_PATHS.sessions}/:sessionId/events`,
 } as const;
@@ -37,6 +38,7 @@ export function sessionApiPaths(sessionId: string): {
   messages: string;
   prompt: string;
   abort: string;
+  model: string;
   thinkingLevel: string;
   events: string;
 } {
@@ -46,6 +48,7 @@ export function sessionApiPaths(sessionId: string): {
     messages: `${base}/messages`,
     prompt: `${base}/prompt`,
     abort: `${base}/abort`,
+    model: `${base}/model`,
     thinkingLevel: `${base}/thinking-level`,
     events: `${base}/events`,
   };

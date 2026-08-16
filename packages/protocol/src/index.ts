@@ -4,14 +4,25 @@
  * 本包是数据结构、事件格式与传输约定的唯一来源。
  */
 export type {
+  ActiveCompaction,
   AgentSessionState,
   AgentStreamEvent,
   ChatMessage,
+  CompactionReason,
   CreateSessionResult,
+  SessionModelChangedEvent,
+  SessionStateEvent,
   SessionSummary,
   ThinkingLevel,
 } from './chat.ts';
-export type { ModelConfig, ModelInfo, ProviderInfo, TestConnectionResult } from './model.ts';
+export type {
+  AvailableModel,
+  ModelConfig,
+  ModelInfo,
+  ModelReference,
+  ProviderInfo,
+  TestConnectionResult,
+} from './model.ts';
 export {
   API_PATHS,
   DEFAULT_SERVICE_PORT,

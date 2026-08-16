@@ -1,20 +1,55 @@
 import type { AgentMessage, ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { JsonAgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
-/** SSE 传输的 Pi JSON 会话事件 */
-export type AgentStreamEvent = JsonAgentSessionEvent;
+import type { AvailableModel } from './model.ts';
+
+/** 会话模型变更后由 Hub 广播的完整状态 */
+export interface SessionModelChangedEvent {
+  /** 驴打滚会话模型变更事件 */
+  type: 'session_model_changed';
+  /** 变更后的权威会话状态 */
+  state: AgentSessionState;
+}
+
+/** SSE 建连后用于校准 HTTP 初始化竞态的权威会话快照 */
+export interface SessionStateEvent {
+  /** 会话事件流的初始状态 */
+  type: 'session_state';
+  /** 建立订阅时的权威会话状态 */
+  state: AgentSessionState;
+}
+
+/** SSE 传输的 Pi JSON 事件与驴打滚会话状态事件 */
+export type AgentStreamEvent = JsonAgentSessionEvent | SessionModelChangedEvent | SessionStateEvent;
 
 /** Pi 会话中的结构化消息 */
 export type ChatMessage = AgentMessage;
+
+/** Pi 上下文压缩的触发原因 */
+export type CompactionReason = Extract<AgentStreamEvent, { type: 'compaction_start' }>['reason'];
+
+/** 当前仍在进行的上下文压缩 */
+export interface ActiveCompaction {
+  /** 手动触发、阈值触发或上下文溢出恢复 */
+  reason: CompactionReason;
+}
 
 /** Pi 当前会话的运行与思考等级状态 */
 export interface AgentSessionState {
   /** Agent 是否仍在运行、重试、压缩或处理排队任务 */
   isRunning: boolean;
+  /** 客户端重连时用于恢复压缩状态；没有压缩时为 null */
+  activeCompaction: ActiveCompaction | null;
   /** 当前实际思考等级 */
   thinkingLevel: ThinkingLevel;
   /** 当前模型支持的思考等级 */
   availableThinkingLevels: ThinkingLevel[];
+  /** 当前会话后续 Agent 运行使用的模型 */
+  model: AvailableModel;
+  /** Agent Hub 当前具有有效凭据的全部模型 */
+  availableModels: AvailableModel[];
+  /** 恢复会话模型失败时的非阻塞警告 */
+  modelWarning: string | null;
 }
 
 /** 侧边栏展示的持久化会话摘要 */

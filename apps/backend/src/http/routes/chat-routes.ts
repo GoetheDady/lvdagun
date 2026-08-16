@@ -4,6 +4,7 @@ import {
   API_PATHS,
   SESSION_API_PATHS,
   type CreateSessionResult,
+  type ModelReference,
   type ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -61,5 +62,15 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       return;
     }
     res.json(await sessionManager.setThinkingLevel(sessionId, level as ThinkingLevel));
+  });
+
+  app.put(SESSION_API_PATHS.model, async (req, res) => {
+    const { provider, id } = req.body as { provider?: unknown; id?: unknown };
+    if (typeof provider !== 'string' || typeof id !== 'string' || !provider || !id) {
+      res.status(400).json({ error: '模型参数不合法' });
+      return;
+    }
+    const model: ModelReference = { provider, id };
+    res.json(await sessionManager.setModel(req.params.sessionId!, model));
   });
 }

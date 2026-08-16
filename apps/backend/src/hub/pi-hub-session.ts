@@ -5,13 +5,16 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { sessionEntryToContextMessages } from '@earendil-works/pi-coding-agent';
 import type {
+  ActiveCompaction,
   AgentSessionState,
   AgentStreamEvent,
+  AvailableModel,
   ChatMessage,
+  ModelReference,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import { AgentBusyError, type HubSession } from './hub';
+import { AgentBusyError, ModelUnavailableError, type HubSession } from './hub';
 import { toJsonAgentEvent } from './pi-json-event';
 
 /** 使用 Pi AgentSessionRuntime 的 Hub 会话实现 */
@@ -19,14 +22,21 @@ export class PiHubSession implements HubSession {
   readonly id: string;
   readonly createdAt: number;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
+  private activeCompaction: ActiveCompaction | null = null;
+  private modelWarning: string | null;
   private unsubscribeSession: (() => void) | null = null;
 
   /**
    * 创建 Pi Runtime 会话适配器并绑定当前会话事件。
    *
    * @param runtime - 可替换当前 AgentSession 的 Pi Runtime
+   * @param modelWarning - 恢复会话模型失败时的非阻塞警告
    */
-  constructor(private readonly runtime: AgentSessionRuntime) {
+  constructor(
+    private readonly runtime: AgentSessionRuntime,
+    modelWarning: string | null = null
+  ) {
+    this.modelWarning = modelWarning;
     this.id = runtime.session.sessionId;
     this.createdAt = Date.now();
     this.bindSession(runtime.session);
@@ -103,20 +113,32 @@ export class PiHubSession implements HubSession {
    */
   getState(): AgentSessionState {
     const session = this.runtime.session;
+    const model = session.model;
+    if (!model) {
+      throw new Error('Pi 会话没有可用模型');
+    }
     return {
-      isRunning: !session.isIdle,
+      isRunning: !session.isIdle || this.activeCompaction !== null,
+      activeCompaction: this.activeCompaction ? { ...this.activeCompaction } : null,
       thinkingLevel: session.thinkingLevel,
       availableThinkingLevels: [...session.getAvailableThinkingLevels()],
+      model: this.toAvailableModel(model),
+      availableModels: this.runtime.services.modelRuntime
+        .getAvailableSnapshot()
+        .map((availableModel) => this.toAvailableModel(availableModel)),
+      modelWarning: this.modelWarning,
     };
   }
 
   /**
-   * 中止 Agent 运行并等待其稳定。
+   * 中止 Agent 运行或上下文压缩并等待其稳定。
    *
    * @returns Agent 完全稳定后解决的 Promise
    */
   async abort(): Promise<void> {
-    await this.runtime.session.abort();
+    const session = this.runtime.session;
+    session.abortCompaction();
+    await session.abort();
   }
 
   /**
@@ -126,9 +148,33 @@ export class PiHubSession implements HubSession {
    * @returns 设置后的会话状态
    */
   async setThinkingLevel(level: ThinkingLevel): Promise<AgentSessionState> {
+    this.assertIdle();
     this.runtime.session.setThinkingLevel(level);
     await this.runtime.services.settingsManager.flush();
     return this.getState();
+  }
+
+  /**
+   * 设置当前会话模型并向全部客户端广播权威状态。
+   *
+   * @param reference - 跨 Provider 模型引用
+   * @returns 设置后的权威会话状态
+   */
+  async setModel(reference: ModelReference): Promise<AgentSessionState> {
+    this.assertIdle();
+    const model = this.runtime.services.modelRuntime
+      .getAvailableSnapshot()
+      .find((candidate) => candidate.provider === reference.provider && candidate.id === reference.id);
+    if (!model) {
+      throw new ModelUnavailableError(reference);
+    }
+
+    await this.runtime.session.setModel(model);
+    await this.runtime.services.settingsManager.flush();
+    this.modelWarning = null;
+    const state = this.getState();
+    this.emit({ type: 'session_model_changed', state });
+    return state;
   }
 
   /**
@@ -155,6 +201,36 @@ export class PiHubSession implements HubSession {
     this.unsubscribeSession = session.subscribe(this.handleEvent);
   }
 
+  /** @throws Agent 正在运行或压缩 */
+  private assertIdle(): void {
+    if (!this.runtime.session.isIdle || this.activeCompaction !== null) {
+      throw new AgentBusyError();
+    }
+  }
+
+  /**
+   * 将 Pi 模型投影为客户端可展示的可用模型。
+   *
+   * @param model - Pi 模型对象
+   * @returns 跨 Provider 的展示模型
+   */
+  private toAvailableModel(model: { provider: string; id: string; name: string }): AvailableModel {
+    return {
+      provider: model.provider,
+      providerName:
+        this.runtime.services.modelRuntime.getProvider(model.provider)?.name ?? model.provider,
+      id: model.id,
+      name: model.name,
+    };
+  }
+
+  /** @param event - 要广播给当前会话全部客户端的事件 */
+  private emit(event: AgentStreamEvent): void {
+    for (const listener of this.listeners) {
+      listener(event);
+    }
+  }
+
   /**
    * 转换并广播 Pi 进程内事件。
    *
@@ -162,9 +238,13 @@ export class PiHubSession implements HubSession {
    * @returns 无返回值
    */
   private readonly handleEvent = (event: AgentSessionEvent): void => {
-    const jsonEvent = toJsonAgentEvent(event);
-    for (const listener of this.listeners) {
-      listener(jsonEvent);
+    if (event.type === 'compaction_start') {
+      this.activeCompaction = { reason: event.reason };
+    } else if (event.type === 'compaction_end' || event.type === 'agent_settled') {
+      this.activeCompaction = null;
     }
+
+    const jsonEvent = toJsonAgentEvent(event);
+    this.emit(jsonEvent);
   };
 }

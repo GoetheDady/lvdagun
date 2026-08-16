@@ -2,6 +2,7 @@ import type {
   AgentSessionState,
   AgentStreamEvent,
   ChatMessage,
+  ModelReference,
   ModelConfig,
   ModelInfo,
   ProviderInfo,
@@ -35,6 +36,21 @@ export class SessionNotFoundError extends Error {
   }
 }
 
+/** 请求的模型当前没有有效凭据或不存在 */
+export class ModelUnavailableError extends Error {
+  readonly status = 400;
+
+  /**
+   * 创建模型不可用错误。
+   *
+   * @param model - 请求的跨 Provider 模型引用
+   */
+  constructor(model: ModelReference) {
+    super(`模型不可用:${model.provider}/${model.id}`);
+    this.name = 'ModelUnavailableError';
+  }
+}
+
 /** 本地服务与 Pi Agent 会话之间的能力契约 */
 export interface HubSession {
   /** Pi 持久化会话的不透明标识 */
@@ -53,7 +69,7 @@ export interface HubSession {
   prompt(text: string): Promise<void>;
 
   /**
-   * 订阅 Pi JSON 会话事件。
+   * 订阅 Pi JSON 事件和 Hub 会话状态事件。
    *
    * @param listener - 事件回调
    * @returns 退订函数
@@ -75,7 +91,7 @@ export interface HubSession {
   getState(): AgentSessionState;
 
   /**
-   * 中止当前 Agent 运行并等待其稳定。
+   * 中止当前 Agent 运行或上下文压缩并等待其稳定。
    *
    * @returns Agent 完全稳定后解决的 Promise
    */
@@ -88,6 +104,15 @@ export interface HubSession {
    * @returns 设置后的当前会话状态
    */
   setThinkingLevel(level: ThinkingLevel): Promise<AgentSessionState>;
+
+  /**
+   * 设置当前会话后续 Agent 运行使用的模型。
+   *
+   * @param model - 跨 Provider 模型引用
+   * @returns 设置后的权威会话状态
+   * @throws Agent 正在运行或模型当前不可用
+   */
+  setModel(model: ModelReference): Promise<AgentSessionState>;
 
   /**
    * 释放 Pi Runtime 与事件订阅。
@@ -123,7 +148,7 @@ export interface Hub {
   listModels(providerId: string): Promise<ModelInfo[]>;
 
   /**
-   * 测试 Provider 凭证和网络链路。
+   * 测试 Provider 凭证和网络链路;成功时由 Pi 持久化凭证,失败时不修改凭据。
    *
    * @param providerId - Provider id
    * @param apiKey - 待测试的 API Key

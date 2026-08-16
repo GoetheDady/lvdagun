@@ -7,6 +7,7 @@ import {
   type CreateSessionResult,
   type ModelConfig,
   type ModelInfo,
+  type ModelReference,
   type ProviderInfo,
   type SessionSummary,
   type TestConnectionResult,
@@ -82,5 +83,15 @@ export const api = {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ level }),
+    }),
+
+  setSessionModel: (
+    sessionId: string,
+    model: ModelReference
+  ): Promise<AgentSessionState> =>
+    request(sessionApiPaths(sessionId).model, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(model),
     }),
 };

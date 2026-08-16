@@ -14,12 +14,20 @@ const pi = vi.hoisted(() => ({
     streamResult: null as null | { stopReason: string; errorMessage?: string } | Error,
     createCount: 0,
     setRuntimeApiKeyCalls: [] as Array<{ provider: string; apiKey: string }>,
+    loginCalls: [] as Array<{ provider: string; type: string; apiKey: string }>,
+    streamApiKeys: [] as Array<string | undefined>,
+    runtimeCreateOptions: null as null | Record<string, unknown>,
+    setModelCalls: [] as Array<{ provider: string; id: string }>,
+    currentModel: null as null | { provider: string; id: string; name: string },
+    storedModel: null as null | { provider: string; modelId: string },
     sessionEvents: [] as unknown[],
     messages: [] as unknown[],
     entries: [] as unknown[],
     isIdle: true,
     thinkingLevel: 'medium',
+    storedThinkingLevel: 'medium',
     abortCalls: 0,
+    abortCompactionCalls: 0,
     disposeCalls: 0,
     flushCalls: 0,
     activeTools: [] as string[],
@@ -42,12 +50,10 @@ vi.mock('node:fs/promises', () => ({
   },
 }));
 
-vi.mock('@earendil-works/pi-ai', () => ({
-  InMemoryCredentialStore: class {},
-}));
-
 vi.mock('@earendil-works/pi-coding-agent', () => {
   const modelRuntime = {
+    getProvider: (providerId: string) =>
+      pi.state.providers.find((provider) => provider.id === providerId),
     getProviders: () =>
       pi.state.providers.map((provider) => ({
         id: provider.id,
@@ -59,20 +65,44 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       pi.state.setRuntimeApiKeyCalls.push({ provider, apiKey });
     },
     getModel: (providerId: string, modelId: string) =>
-      pi.state.providers.some(
-        (provider) =>
-          provider.id === providerId && provider.models.some((model) => model.id === modelId)
-      )
-        ? { id: modelId, provider: providerId }
-        : undefined,
-    streamSimple: () => ({
+      pi.state.providers
+        .find((provider) => provider.id === providerId)
+        ?.models.filter((model) => model.id === modelId)
+        .map((model) => ({ ...model, provider: providerId, reasoning: true }))[0],
+    getAvailable: async () =>
+      pi.state.providers.flatMap((provider) =>
+        provider.models.map((model) => ({
+          ...model,
+          provider: provider.id,
+          reasoning: true,
+        }))
+      ),
+    getAvailableSnapshot: () =>
+      pi.state.providers.flatMap((provider) =>
+        provider.models.map((model) => ({
+          ...model,
+          provider: provider.id,
+          reasoning: true,
+        }))
+      ),
+    streamSimple: (_model: unknown, _context: unknown, options?: { apiKey?: string }) => {
+      pi.state.streamApiKeys.push(options?.apiKey);
+      return {
       result: async () => {
         if (pi.state.streamResult instanceof Error) {
           throw pi.state.streamResult;
         }
         return pi.state.streamResult;
       },
-    }),
+      };
+    },
+    login: async (
+      provider: string,
+      type: string,
+      interaction: { prompt(): Promise<string> }
+    ) => {
+      pi.state.loginCalls.push({ provider, type, apiKey: await interaction.prompt() });
+    },
   };
 
   /**
@@ -96,6 +126,9 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       get thinkingLevel() {
         return pi.state.thinkingLevel;
       },
+      get model() {
+        return pi.state.currentModel;
+      },
       getAvailableThinkingLevels: () => ['off', 'low', 'medium', 'high'],
       subscribe: (nextListener: (event: unknown) => void) => {
         listener = nextListener;
@@ -112,8 +145,22 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       abort: async () => {
         pi.state.abortCalls += 1;
       },
+      abortCompaction: () => {
+        pi.state.abortCompactionCalls += 1;
+        listener?.({
+          type: 'compaction_end',
+          reason: 'threshold',
+          result: undefined,
+          aborted: true,
+          willRetry: false,
+        });
+      },
       setThinkingLevel: (level: string) => {
         pi.state.thinkingLevel = level;
+      },
+      setModel: async (model: { provider: string; id: string; name: string }) => {
+        pi.state.setModelCalls.push({ provider: model.provider, id: model.id });
+        pi.state.currentModel = model;
       },
     };
   };
@@ -134,12 +181,19 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       timestamp: '2026-08-15T00:00:00.000Z',
       cwd: '/Users/test',
     }),
+    buildSessionContext: () => ({
+      messages: [],
+      thinkingLevel: pi.state.storedThinkingLevel,
+      model: pi.state.storedModel,
+    }),
+    getBranch: () => pi.state.entries,
   };
 
   return {
     ModelRuntime: {
-      create: async () => {
+      create: async (options: Record<string, unknown>) => {
         pi.state.createCount += 1;
+        pi.state.runtimeCreateOptions = options;
         return modelRuntime;
       },
     },
@@ -156,10 +210,18 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       resourceLoaderOptions: Record<string, unknown>;
     }) => {
       pi.state.resourceLoaderOptions = options.resourceLoaderOptions;
-      return { settingsManager, diagnostics: [] };
+      return { settingsManager, modelRuntime, diagnostics: [] };
     },
-    createAgentSessionFromServices: async (options: { tools: string[] }) => {
+    createAgentSessionFromServices: async (options: {
+      tools: string[];
+      model: { provider: string; id: string; name: string };
+      thinkingLevel?: string;
+    }) => {
       pi.state.activeTools = options.tools;
+      pi.state.currentModel = options.model;
+      if (options.thinkingLevel) {
+        pi.state.thinkingLevel = options.thinkingLevel;
+      }
       return { session: createSession() };
     },
     createAgentSessionRuntime: async (
@@ -211,12 +273,20 @@ beforeEach(() => {
   pi.state.streamResult = null;
   pi.state.createCount = 0;
   pi.state.setRuntimeApiKeyCalls = [];
+  pi.state.loginCalls = [];
+  pi.state.streamApiKeys = [];
+  pi.state.runtimeCreateOptions = null;
+  pi.state.setModelCalls = [];
+  pi.state.currentModel = null;
+  pi.state.storedModel = null;
   pi.state.sessionEvents = [];
   pi.state.messages = [];
   pi.state.entries = [];
   pi.state.isIdle = true;
   pi.state.thinkingLevel = 'medium';
+  pi.state.storedThinkingLevel = 'medium';
   pi.state.abortCalls = 0;
+  pi.state.abortCompactionCalls = 0;
   pi.state.disposeCalls = 0;
   pi.state.flushCalls = 0;
   pi.state.activeTools = [];
@@ -275,7 +345,14 @@ describe('createHub 连接测试', () => {
     pi.state.streamResult = { stopReason: 'stop' };
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-test')).resolves.toEqual({ ok: true });
-    expect(pi.state.setRuntimeApiKeyCalls).toEqual([{ provider: 'anthropic', apiKey: 'sk-test' }]);
+    expect(pi.state.streamApiKeys).toEqual(['sk-test']);
+    expect(pi.state.loginCalls).toEqual([
+      { provider: 'anthropic', type: 'api_key', apiKey: 'sk-test' },
+    ]);
+    expect(pi.state.runtimeCreateOptions).toMatchObject({
+      authPath: '/tmp/lvdagun-test/auth.json',
+    });
+    expect(pi.state.runtimeCreateOptions).not.toHaveProperty('credentials');
   });
 
   it('把 Pi stopReason=error 转换为连接失败', async () => {
@@ -285,6 +362,7 @@ describe('createHub 连接测试', () => {
       ok: false,
       message: '401 凭证无效',
     });
+    expect(pi.state.loginCalls).toEqual([]);
   });
 });
 
@@ -320,6 +398,52 @@ describe('createHub 会话能力', () => {
     ]);
   });
 
+  it('列出可用模型并在空闲时切换会话模型', async () => {
+    pi.state.providers.push({
+      id: 'openai',
+      name: 'OpenAI',
+      hasApiKeyAuth: true,
+      models: [{ id: 'gpt-a', name: 'GPT A' }],
+    });
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(session.getState()).toMatchObject({
+      model: { provider: 'anthropic', id: 'claude-a', name: 'Claude A' },
+      availableModels: [
+        {
+          provider: 'anthropic',
+          providerName: 'Anthropic',
+          id: 'claude-a',
+          name: 'Claude A',
+        },
+        { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+      ],
+    });
+
+    await expect(session.setModel({ provider: 'openai', id: 'gpt-a' })).resolves.toMatchObject({
+      model: { provider: 'openai', id: 'gpt-a', name: 'GPT A' },
+    });
+    expect(pi.state.setModelCalls).toEqual([{ provider: 'openai', id: 'gpt-a' }]);
+    expect(events).toContainEqual({
+      type: 'session_model_changed',
+      state: expect.objectContaining({
+        model: expect.objectContaining({ provider: 'openai', id: 'gpt-a', name: 'GPT A' }),
+      }),
+    });
+
+    pi.state.isIdle = false;
+    await expect(session.setModel({ provider: 'anthropic', id: 'claude-a' })).rejects.toThrow(
+      'Agent 正在运行'
+    );
+  });
+
   it('列出持久化会话并按不透明 id 打开对应 Pi 文件', async () => {
     pi.state.sessionInfos = [
       {
@@ -348,6 +472,58 @@ describe('createHub 会话能力', () => {
     await expect(
       hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'missing')
     ).rejects.toThrow('会话不存在:missing');
+  });
+
+  it('恢复空会话分支中已持久化的会话模型', async () => {
+    pi.state.providers.push({
+      id: 'openai',
+      name: 'OpenAI',
+      hasApiKeyAuth: true,
+      models: [{ id: 'gpt-a', name: 'GPT A' }],
+    });
+    pi.state.storedModel = { provider: 'openai', modelId: 'gpt-a' };
+    pi.state.sessionInfos = [
+      {
+        id: 'saved',
+        path: '/tmp/lvdagun-test/sessions/saved.jsonl',
+        created: new Date(10),
+        modified: new Date(20),
+        messageCount: 0,
+      },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+
+    const session = await hub.openSession(
+      { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
+      'saved'
+    );
+
+    expect(session.getState()).toMatchObject({
+      model: { provider: 'openai', id: 'gpt-a', name: 'GPT A' },
+      modelWarning: null,
+    });
+  });
+
+  it('恢复空会话分支中已持久化的思考等级', async () => {
+    pi.state.storedThinkingLevel = 'high';
+    pi.state.entries = [{ type: 'thinking_level_change', thinkingLevel: 'high' }];
+    pi.state.sessionInfos = [
+      {
+        id: 'saved',
+        path: '/tmp/lvdagun-test/sessions/saved.jsonl',
+        created: new Date(10),
+        modified: new Date(20),
+        messageCount: 0,
+      },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+
+    const session = await hub.openSession(
+      { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
+      'saved'
+    );
+
+    expect(session.getState().thinkingLevel).toBe('high');
   });
 
   it('原样镜像 Pi JSON 事件，并去掉 message_update 累计快照', async () => {
@@ -401,7 +577,8 @@ describe('createHub 会话能力', () => {
     ]);
   });
 
-  it('委托中止和思考等级，并异步释放 Runtime', async () => {
+  it('跟踪自动压缩，并在中止时同时取消压缩和 Agent 运行', async () => {
+    pi.state.sessionEvents = [{ type: 'compaction_start', reason: 'threshold' }];
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
@@ -409,13 +586,21 @@ describe('createHub 会话能力', () => {
       modelId: 'claude-a',
     });
 
+    await session.prompt('你好');
+    expect(session.getState()).toMatchObject({
+      isRunning: true,
+      activeCompaction: { reason: 'threshold' },
+    });
+
     await session.abort();
+    expect(session.getState().activeCompaction).toBeNull();
     await expect(session.setThinkingLevel('high')).resolves.toMatchObject({
       thinkingLevel: 'high',
     });
     await session.dispose();
 
     expect(pi.state.abortCalls).toBe(1);
+    expect(pi.state.abortCompactionCalls).toBe(1);
     expect(pi.state.flushCalls).toBeGreaterThanOrEqual(2);
     expect(pi.state.disposeCalls).toBe(1);
   });

@@ -72,8 +72,25 @@ describe('对话接口', () => {
       const stateResponse = await fetch(`${baseUrl}/api/sessions/session-1`);
       await expect(stateResponse.json()).resolves.toEqual({
         isRunning: false,
+        activeCompaction: null,
         thinkingLevel: 'medium',
         availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+        model: {
+          provider: 'anthropic',
+          providerName: 'Anthropic',
+          id: 'claude-a',
+          name: 'Claude A',
+        },
+        availableModels: [
+          {
+            provider: 'anthropic',
+            providerName: 'Anthropic',
+            id: 'claude-a',
+            name: 'Claude A',
+          },
+          { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+        ],
+        modelWarning: null,
       });
 
       const thinking = await fetch(`${baseUrl}/api/sessions/session-1/thinking-level`, {
@@ -98,6 +115,28 @@ describe('对话接口', () => {
       const next = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' });
       expect(next.status).toBe(201);
       await expect(next.json()).resolves.toEqual({ sessionId: 'session-2' });
+    } finally {
+      await close();
+    }
+  });
+
+  it('按会话切换跨 Provider 模型并返回权威状态', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      const response = await fetch(`${baseUrl}/api/sessions/session-1/model`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'openai', id: 'gpt-a' }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        model: { provider: 'openai', id: 'gpt-a', name: 'GPT A' },
+      });
+      expect(sessions[0]!.setModel).toHaveBeenCalledWith({ provider: 'openai', id: 'gpt-a' });
     } finally {
       await close();
     }

@@ -56,12 +56,20 @@ _Avoid_: 恢复历史、打开历史
 控制模型在后续调用中投入多少推理能力的等级。可选等级由当前模型决定,不支持思考的模型只有关闭等级。
 _Avoid_: 推理开关、思考模式
 
+**会话模型**:
+当前会话为后续 Agent 运行选定的大模型。各会话可以独立选择;切换不会改变其他会话或正在进行的 Agent 运行。
+_Avoid_: 全局模型、当前模型
+
+**可用模型**:
+Agent Hub 已具备有效访问凭据、可以选作会话模型的大模型。没有有效凭据的模型不属于可用模型。
+_Avoid_: 所有模型、模型目录
+
 **Provider**:
 提供大模型 API 的服务商,以 SDK 内置 id 标识(如 anthropic、openai、deepseek)。
 _Avoid_: 平台、渠道、厂商
 
 **模型配置(ModelConfig)**:
-Provider、modelId、apiKey 三字段的组合,存于 `~/.lvdagun/config.json`,决定 Hub 使用哪个模型对话。
+Provider、modelId、apiKey 三字段的组合,为 Agent Hub 提供默认模型及其访问凭据。新会话以默认模型作为初始会话模型。
 _Avoid_: 设置项、config
 
 **配置向导**:

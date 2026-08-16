@@ -45,6 +45,10 @@ describe('事件流接口', () => {
     const { baseUrl, close } = await startServer(hub, store);
     const events = await openEvents(baseUrl);
     try {
+      await expect(events.nextEvent()).resolves.toMatchObject({
+        type: 'session_state',
+        state: { model: { provider: 'anthropic', id: 'claude-a' } },
+      });
       const response = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

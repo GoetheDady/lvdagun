@@ -4,6 +4,8 @@ import type {
   AgentSessionState,
   AgentStreamEvent,
   ChatMessage,
+  CompactionReason,
+  ModelReference,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -50,7 +52,7 @@ export interface RetryRecord {
 /** Pi 上下文压缩的临时状态。 */
 export interface CompactionState {
   status: 'running' | 'success' | 'aborted' | 'error';
-  reason: 'manual' | 'threshold' | 'overflow';
+  reason: CompactionReason;
   message?: string;
 }
 
@@ -67,6 +69,7 @@ export interface ChatSessionState {
   sending: boolean;
   aborting: boolean;
   settingThinkingLevel: boolean;
+  settingModel: boolean;
   error: ChatError | null;
 }
 
@@ -83,6 +86,7 @@ export const initialState: ChatSessionState = {
   sending: false,
   aborting: false,
   settingThinkingLevel: false,
+  settingModel: false,
   error: null,
 };
 
@@ -97,6 +101,8 @@ export type ChatSessionAction =
   | { type: 'abort_finished' }
   | { type: 'thinking_level_started' }
   | { type: 'thinking_level_finished'; session: AgentSessionState }
+  | { type: 'model_started' }
+  | { type: 'model_finished'; session: AgentSessionState }
   | { type: 'operation_failed'; message: string; retryable: boolean };
 
 /**
@@ -394,6 +400,13 @@ function reducePiEvent(
       return state.session
         ? { ...state, session: { ...state.session, thinkingLevel: event.level } }
         : state;
+    case 'session_model_changed':
+    case 'session_state':
+      return {
+        ...state,
+        session: event.state,
+        isRunning: event.state.isRunning,
+      };
     case 'agent_end':
     case 'turn_start':
     case 'turn_end':
@@ -420,6 +433,9 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         messages: action.messages,
         session: action.session,
         isRunning: action.session.isRunning,
+        compaction: action.session.activeCompaction
+          ? { status: 'running', reason: action.session.activeCompaction.reason }
+          : null,
         loading: false,
         error: null,
       };
@@ -452,6 +468,15 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         isRunning: action.session.isRunning,
         settingThinkingLevel: false,
       };
+    case 'model_started':
+      return { ...state, settingModel: true, error: null };
+    case 'model_finished':
+      return {
+        ...state,
+        session: action.session,
+        isRunning: action.session.isRunning,
+        settingModel: false,
+      };
     case 'operation_failed':
       return {
         ...state,
@@ -459,6 +484,7 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         sending: false,
         aborting: false,
         settingThinkingLevel: false,
+        settingModel: false,
         error: { message: action.message, retryable: action.retryable },
       };
   }
@@ -481,7 +507,7 @@ export interface ChatSession {
    */
   retry(): void;
   /**
-   * 中止当前 Pi Agent 运行。
+   * 中止当前 Pi Agent 运行或上下文压缩。
    *
    * @returns Pi 完全稳定后解决的 Promise
    */
@@ -493,6 +519,13 @@ export interface ChatSession {
    * @returns 设置持久化后解决的 Promise
    */
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
+  /**
+   * 设置当前会话后续 Agent 运行使用的模型。
+   *
+   * @param model - 跨 Provider 模型引用
+   * @returns 设置持久化后解决的 Promise
+   */
+  setModel(model: ModelReference): Promise<void>;
 }
 
 /**
@@ -556,7 +589,12 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const send = useCallback(
     async (text: string): Promise<void> => {
-      if (state.isRunning || state.sending) {
+      if (
+        state.isRunning ||
+        state.sending ||
+        state.settingModel ||
+        state.settingThinkingLevel
+      ) {
         return;
       }
       dispatch({ type: 'send_started' });
@@ -571,7 +609,7 @@ export function useChatSession(sessionId: string): ChatSession {
         });
       }
     },
-    [sessionId, state.isRunning, state.sending]
+    [sessionId, state.isRunning, state.sending, state.settingModel, state.settingThinkingLevel]
   );
 
   const retry = useCallback((): void => {
@@ -605,7 +643,12 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
-      if (state.settingThinkingLevel || state.session?.thinkingLevel === level) {
+      if (
+        state.isRunning ||
+        state.settingModel ||
+        state.settingThinkingLevel ||
+        state.session?.thinkingLevel === level
+      ) {
         return;
       }
       dispatch({ type: 'thinking_level_started' });
@@ -620,8 +663,44 @@ export function useChatSession(sessionId: string): ChatSession {
         });
       }
     },
-    [sessionId, state.session?.thinkingLevel, state.settingThinkingLevel]
+    [
+      sessionId,
+      state.isRunning,
+      state.session?.thinkingLevel,
+      state.settingModel,
+      state.settingThinkingLevel,
+    ]
   );
 
-  return { state, send, retry, abort, setThinkingLevel };
+  const setModel = useCallback(
+    async (model: ModelReference): Promise<void> => {
+      if (
+        state.isRunning ||
+        state.settingModel ||
+        state.settingThinkingLevel ||
+        (state.session?.model.provider === model.provider && state.session.model.id === model.id)
+      ) {
+        return;
+      }
+      dispatch({ type: 'model_started' });
+      try {
+        const session = await api.setSessionModel(sessionId, model);
+        dispatch({ type: 'model_finished', session });
+      } catch (error) {
+        dispatch({
+          type: 'operation_failed',
+          message: error instanceof Error ? error.message : String(error),
+          retryable: false,
+        });
+      }
+    }, [
+      sessionId,
+      state.isRunning,
+      state.session,
+      state.settingModel,
+      state.settingThinkingLevel,
+    ]
+  );
+
+  return { state, send, retry, abort, setThinkingLevel, setModel };
 }

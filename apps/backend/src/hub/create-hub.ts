@@ -7,7 +7,6 @@ import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import {
   type CreateAgentSessionRuntimeFactory,
   createAgentSessionFromServices,
@@ -17,7 +16,12 @@ import {
   SessionManager as PiSessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
-import type { ModelInfo, ProviderInfo, TestConnectionResult } from '@lvdagun/protocol';
+import type {
+  ModelInfo,
+  ProviderInfo,
+  TestConnectionResult,
+  ThinkingLevel,
+} from '@lvdagun/protocol';
 
 import { SessionNotFoundError, type Hub, type HubSession } from './hub';
 import { PiHubSession } from './pi-hub-session';
@@ -52,7 +56,7 @@ export function createHub(options: { dataDir: string }): Hub {
    */
   const getRuntime = (): Promise<ModelRuntime> => {
     runtimePromise ??= ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
+      authPath: join(dataDir, 'auth.json'),
       modelsPath: join(dataDir, 'models.json'),
       modelsStorePath: join(dataDir, 'models-store.json'),
     });
@@ -74,11 +78,31 @@ export function createHub(options: { dataDir: string }): Hub {
     if (config.apiKey) {
       await runtime.setRuntimeApiKey(config.provider, config.apiKey);
     }
+    const availableModels = await runtime.getAvailable();
 
-    const model = runtime.getModel(config.provider, config.modelId);
-    if (!model) {
+    const defaultModel = runtime.getModel(config.provider, config.modelId);
+    if (!defaultModel) {
       throw new Error(`未找到模型:${config.provider}/${config.modelId}`);
     }
+    const storedContext = piSessionManager.buildSessionContext();
+    const storedReference = storedContext.model;
+    const storedThinkingLevel = piSessionManager
+      .getBranch()
+      .some((entry) => entry.type === 'thinking_level_change')
+      ? (storedContext.thinkingLevel as ThinkingLevel)
+      : undefined;
+    const restoredModel = storedReference
+      ? availableModels.find(
+          (candidate) =>
+            candidate.provider === storedReference.provider &&
+            candidate.id === storedReference.modelId
+        )
+      : undefined;
+    const model = restoredModel ?? defaultModel;
+    const modelWarning =
+      storedReference && !restoredModel
+        ? `会话模型 ${storedReference.provider}/${storedReference.modelId} 已不可用,已回退到 ${defaultModel.provider}/${defaultModel.id}`
+        : null;
 
     const settingsManager = SettingsManager.create(piSessionManager.getCwd(), dataDir, {
       projectTrusted: true,
@@ -111,6 +135,7 @@ export function createHub(options: { dataDir: string }): Hub {
           sessionManager: runtimeOptions.sessionManager,
           sessionStartEvent: runtimeOptions.sessionStartEvent,
           model,
+          thinkingLevel: storedThinkingLevel,
           tools: DEFAULT_TOOLS,
         })),
         services,
@@ -124,7 +149,7 @@ export function createHub(options: { dataDir: string }): Hub {
       sessionManager: piSessionManager,
     });
 
-    return new PiHubSession(agentRuntime);
+    return new PiHubSession(agentRuntime, modelWarning);
   };
 
   /**
@@ -170,7 +195,6 @@ export function createHub(options: { dataDir: string }): Hub {
 
     async testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult> {
       const runtime = await getRuntime();
-      await runtime.setRuntimeApiKey(providerId, apiKey);
 
       const model = runtime
         .getProviders()
@@ -187,7 +211,7 @@ export function createHub(options: { dataDir: string }): Hub {
           messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
           tools: [],
         },
-        { maxTokens: 1, signal: AbortSignal.timeout(10_000) }
+        { apiKey, maxTokens: 1, signal: AbortSignal.timeout(10_000) }
       );
 
       try {
@@ -196,6 +220,10 @@ export function createHub(options: { dataDir: string }): Hub {
         if (result.stopReason === 'error') {
           return { ok: false, message: result.errorMessage ?? '连接失败' };
         }
+        await runtime.login(providerId, 'api_key', {
+          prompt: async () => apiKey,
+          notify: () => {},
+        });
         return { ok: true };
       } catch (error) {
         const isTimeout = error instanceof Error && error.name === 'TimeoutError';

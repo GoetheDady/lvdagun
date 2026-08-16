@@ -1,4 +1,4 @@
-/** 模型配置（存于 ~/.lvdagun/config.json，决定 Hub 使用哪个模型对话） */
+/** 模型配置（提供默认模型和访问凭据） */
 export interface ModelConfig {
   /** Provider id，例如 anthropic、openai、deepseek */
   provider: string;
@@ -21,6 +21,22 @@ export interface ModelInfo {
   /** 模型 id（写入配置的值） */
   id: string;
   /** 展示名 */
+  name: string;
+}
+
+/** 跨 Provider 唯一标识一个模型 */
+export interface ModelReference {
+  /** Provider id */
+  provider: string;
+  /** Provider 内的模型 id */
+  id: string;
+}
+
+/** Agent Hub 当前具有有效凭据的模型 */
+export interface AvailableModel extends ModelReference {
+  /** Provider 展示名 */
+  providerName: string;
+  /** 模型展示名 */
   name: string;
 }
 

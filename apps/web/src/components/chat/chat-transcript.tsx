@@ -410,11 +410,16 @@ function SpecialMessage(props: {
 function CompactionDivider(): React.JSX.Element {
   return (
     <div
-      className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground"
+      className="flex w-full items-center gap-3 py-3"
       role="separator"
+      aria-label="压缩成功"
     >
-      <Check className="size-3.5 text-primary" />
-      <span>压缩成功</span>
+      <div className="h-px flex-1 bg-border" aria-hidden="true" />
+      <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <Check className="size-3.5 text-primary" />
+        <span>压缩成功</span>
+      </div>
+      <div className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>
   );
 }

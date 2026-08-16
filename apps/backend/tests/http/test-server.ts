@@ -6,8 +6,10 @@ import { expect, vi } from 'vitest';
 import type {
   AgentSessionState,
   AgentStreamEvent,
+  AvailableModel,
   ChatMessage,
   ModelConfig,
+  ModelReference,
   TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -21,6 +23,16 @@ export const validConfig: ModelConfig = {
   apiKey: 'sk-test',
   modelId: 'claude-a',
 };
+
+const availableModels: AvailableModel[] = [
+  {
+    provider: 'anthropic',
+    providerName: 'Anthropic',
+    id: 'claude-a',
+    name: 'Claude A',
+  },
+  { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+];
 
 /**
  * 构造测试使用的 Pi 助手消息。
@@ -63,6 +75,7 @@ export class FakeSession implements HubSession {
   abortCalls = 0;
   isRunning = false;
   thinkingLevel: ThinkingLevel = 'medium';
+  model: AvailableModel = availableModels[0]!;
   readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
   private timestamp = 1;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
@@ -113,8 +126,12 @@ export class FakeSession implements HubSession {
    */
   getState = (): AgentSessionState => ({
     isRunning: this.isRunning,
+    activeCompaction: null,
     thinkingLevel: this.thinkingLevel,
     availableThinkingLevels: [...this.availableThinkingLevels],
+    model: this.model,
+    availableModels: [...availableModels],
+    modelWarning: null,
   });
 
   /**
@@ -138,6 +155,23 @@ export class FakeSession implements HubSession {
     this.thinkingLevel = level;
     this.emit({ type: 'thinking_level_changed', level });
     return this.getState();
+  });
+
+  /**
+   * 设置测试会话模型并广播权威状态。
+   *
+   * @param reference - 跨 Provider 模型引用
+   * @returns 更新后的会话状态
+   */
+  setModel = vi.fn(async (reference: ModelReference): Promise<AgentSessionState> => {
+    const model = availableModels.find(
+      (candidate) => candidate.provider === reference.provider && candidate.id === reference.id
+    );
+    if (!model) throw new Error('模型不可用');
+    this.model = model;
+    const state = this.getState();
+    this.emit({ type: 'session_model_changed', state });
+    return state;
   });
 
   /**

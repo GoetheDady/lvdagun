@@ -21,6 +21,7 @@ vi.mock('@/services/api-client', () => ({
     prompt: vi.fn(),
     abortSession: vi.fn(),
     setThinkingLevel: vi.fn(),
+    setSessionModel: vi.fn(),
   },
 }));
 
@@ -35,8 +36,25 @@ vi.mock('@/services/event-stream', () => ({
 
 const sessionState: AgentSessionState = {
   isRunning: false,
+  activeCompaction: null,
   thinkingLevel: 'medium',
   availableThinkingLevels: ['off', 'low', 'medium', 'high'],
+  model: {
+    provider: 'anthropic',
+    providerName: 'Anthropic',
+    id: 'claude-a',
+    name: 'Claude A',
+  },
+  availableModels: [
+    {
+      provider: 'anthropic',
+      providerName: 'Anthropic',
+      id: 'claude-a',
+      name: 'Claude A',
+    },
+    { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
+  ],
+  modelWarning: null,
 };
 
 const assistantMessage: ChatMessage = {
@@ -87,6 +105,10 @@ beforeEach(() => {
   vi.mocked(api.prompt).mockResolvedValue(undefined);
   vi.mocked(api.abortSession).mockResolvedValue(undefined);
   vi.mocked(api.setThinkingLevel).mockResolvedValue({ ...sessionState, thinkingLevel: 'high' });
+  vi.mocked(api.setSessionModel).mockResolvedValue({
+    ...sessionState,
+    model: sessionState.availableModels[1]!,
+  });
 });
 
 describe('ChatPage', () => {
@@ -108,10 +130,64 @@ describe('ChatPage', () => {
     expect(screen.getByText(/anthropic \/ claude-a/)).toBeInTheDocument();
   });
 
+  it('把历史压缩摘要渲染为有名称的会话分隔线', async () => {
+    vi.mocked(api.getMessages).mockResolvedValue([
+      { role: 'user', content: '压缩前', timestamp: 1 },
+      { role: 'compactionSummary', summary: '此前对话摘要', tokensBefore: 100, timestamp: 2 },
+      { role: 'user', content: '压缩后', timestamp: 3 },
+    ]);
+    renderChatPage();
+
+    const separator = await screen.findByRole('separator', { name: '压缩成功' });
+    expect(separator).toHaveTextContent('压缩成功');
+    expect(separator.querySelectorAll('.h-px.bg-border')).toHaveLength(2);
+  });
+
+  it('当前轮压缩成功后显示会话分隔线', async () => {
+    renderChatPage();
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+
+    act(() => {
+      captured.onEvent!({ type: 'compaction_start', reason: 'threshold' });
+      captured.onEvent!({
+        type: 'compaction_end',
+        reason: 'threshold',
+        result: {
+          summary: '当前轮摘要',
+          tokensBefore: 100,
+          firstKeptEntryId: 'entry-a',
+        },
+        aborted: false,
+        willRetry: true,
+      });
+    });
+
+    expect(screen.getByRole('separator', { name: '压缩成功' })).toBeInTheDocument();
+  });
+
   it('空态示例建议可填入输入框', async () => {
     renderChatPage();
     await userEvent.click(await screen.findByRole('button', { name: '总结今天的重要新闻' }));
     expect(screen.getByPlaceholderText('输入消息')).toHaveValue('总结今天的重要新闻');
+  });
+
+  it('在统一输入区搜索并切换会话模型且保留草稿', async () => {
+    renderChatPage();
+    const composer = await screen.findByRole('group', { name: '消息输入区' });
+    const input = within(composer).getByPlaceholderText('输入消息');
+    await userEvent.type(input, '保留这段草稿');
+
+    await userEvent.click(within(composer).getByRole('button', { name: /模型.*Claude A/ }));
+    await userEvent.type(screen.getByPlaceholderText('搜索模型'), 'gpt');
+    await userEvent.click(screen.getByRole('option', { name: /GPT A.*gpt-a/ }));
+
+    expect(api.setSessionModel).toHaveBeenCalledWith('session-a', {
+      provider: 'openai',
+      id: 'gpt-a',
+    });
+    expect(input).toHaveValue('保留这段草稿');
+    expect(within(composer).getByRole('combobox', { name: '思考等级' })).toBeInTheDocument();
+    expect(within(composer).getByRole('button', { name: '发送' })).toBeInTheDocument();
   });
 
   it('发送、中止和思考等级操作都携带当前 session id', async () => {
@@ -130,6 +206,20 @@ describe('ChatPage', () => {
     const selector = await screen.findByRole('combobox', { name: '思考等级' });
     await userEvent.selectOptions(selector, 'high');
     expect(api.setThinkingLevel).toHaveBeenCalledWith('session-a', 'high');
+  });
+
+  it('刷新时恢复自动压缩状态并允许停止压缩', async () => {
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      ...sessionState,
+      isRunning: true,
+      activeCompaction: { reason: 'threshold' },
+    });
+    renderChatPage();
+
+    expect(await screen.findByText('压缩中')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('正在压缩上下文')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '停止压缩' }));
+    expect(api.abortSession).toHaveBeenCalledWith('session-a');
   });
 
   it('新对话直接创建持久化会话并导航', async () => {

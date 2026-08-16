@@ -7,6 +7,7 @@ import type { ThinkingLevel } from '@lvdagun/protocol';
 
 import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
+import { ModelSelector } from '@/components/chat/model-selector';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useChatSession } from '@/hooks/use-chat-session';
@@ -117,7 +118,7 @@ function ChatWorkspace({
   sessionId: string;
   sessionList: SessionList;
 }): React.JSX.Element {
-  const { state, send, retry, abort, setThinkingLevel } = useChatSession(sessionId);
+  const { state, send, retry, abort, setThinkingLevel, setModel } = useChatSession(sessionId);
   const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -152,7 +153,14 @@ function ChatWorkspace({
    */
   const handleSend = (): void => {
     const text = input.trim();
-    if (!text || state.sending || state.isRunning || anotherRunningSession) {
+    if (
+      !text ||
+      state.sending ||
+      state.settingModel ||
+      state.settingThinkingLevel ||
+      state.isRunning ||
+      anotherRunningSession
+    ) {
       return;
     }
     setInput('');
@@ -171,9 +179,11 @@ function ChatWorkspace({
 
   const inputPlaceholder = anotherRunningSession
     ? '另一个会话正在运行'
-    : state.isRunning
-      ? 'Agent 正在运行'
-      : '输入消息';
+    : state.compaction?.status === 'running'
+      ? '正在压缩上下文'
+      : state.isRunning
+        ? 'Agent 正在运行'
+        : '输入消息';
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
@@ -186,29 +196,14 @@ function ChatWorkspace({
                 state.isRunning ? 'animate-pulse bg-soy' : 'bg-wood'
               }`}
             />
-            {state.isRunning ? '运行中' : '就绪'}
+            {state.compaction?.status === 'running'
+              ? '压缩中'
+              : state.isRunning
+                ? '运行中'
+                : '就绪'}
           </p>
         </div>
 
-        {state.session ? (
-          <label className="flex h-8 items-center gap-1.5 rounded-md bg-muted/70 px-2 text-xs text-muted-foreground">
-            <span>思考</span>
-            <select
-              aria-label="思考等级"
-              className="max-w-24 bg-transparent text-foreground outline-none"
-              value={state.session.thinkingLevel}
-              disabled={state.settingThinkingLevel}
-              onChange={(event) => handleThinkingLevelChange(event.target.value)}
-            >
-              {state.session.availableThinkingLevels.map((level) => (
-                <option key={level} value={level}>
-                  {THINKING_LEVEL_LABELS[level]}
-                </option>
-              ))}
-            </select>
-            {state.settingThinkingLevel ? <Loader2 className="size-3 animate-spin" /> : null}
-          </label>
-        ) : null}
       </header>
 
       <section className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -259,49 +254,101 @@ function ChatWorkspace({
       </section>
 
       <footer className="shrink-0 bg-background px-5 py-3">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <textarea
-            className="max-h-40 min-h-11 flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2.5 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder={inputPlaceholder}
-            rows={2}
-            value={input}
-            disabled={state.loading || Boolean(anotherRunningSession)}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                handleSend();
-              }
-            }}
-          />
-          {state.isRunning ? (
-            <Button
-              className="h-11 min-w-11"
-              variant="outline"
-              disabled={state.aborting}
-              title="停止"
-              aria-label="停止"
-              onClick={() => void abort()}
-            >
-              {state.aborting ? (
-                <Loader2 className="animate-spin" />
+        <div className="mx-auto max-w-3xl">
+          {state.session?.modelWarning ? (
+            <p role="status" className="mb-2 text-xs text-muted-foreground">
+              {state.session.modelWarning}
+            </p>
+          ) : null}
+          <div
+            role="group"
+            aria-label="消息输入区"
+            className="rounded-md border border-input bg-background transition-shadow focus-within:ring-2 focus-within:ring-ring"
+          >
+            <textarea
+              className="block max-h-40 min-h-20 w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none"
+              placeholder={inputPlaceholder}
+              rows={2}
+              value={input}
+              disabled={state.loading || Boolean(anotherRunningSession)}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  handleSend();
+                }
+              }}
+            />
+            <div className="flex min-h-11 items-center justify-end gap-1 px-2 pb-2">
+              {state.session ? (
+                <>
+                  <ModelSelector
+                    value={state.session.model}
+                    models={state.session.availableModels}
+                    disabled={
+                      state.isRunning || state.settingModel || state.settingThinkingLevel
+                    }
+                    loading={state.settingModel}
+                    onSelect={(model) => void setModel(model)}
+                  />
+                  <label className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted">
+                    <span>思考</span>
+                    <select
+                      aria-label="思考等级"
+                      className="max-w-20 bg-transparent text-foreground outline-none"
+                      value={state.session.thinkingLevel}
+                      disabled={
+                        state.isRunning || state.settingModel || state.settingThinkingLevel
+                      }
+                      onChange={(event) => handleThinkingLevelChange(event.target.value)}
+                    >
+                      {state.session.availableThinkingLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {THINKING_LEVEL_LABELS[level]}
+                        </option>
+                      ))}
+                    </select>
+                    {state.settingThinkingLevel ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : null}
+                  </label>
+                </>
+              ) : null}
+              {state.isRunning ? (
+                <Button
+                  size="icon"
+                  variant="outline"
+                  disabled={state.aborting}
+                  title={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
+                  aria-label={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
+                  onClick={() => void abort()}
+                >
+                  {state.aborting ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Square className="fill-current" />
+                  )}
+                </Button>
               ) : (
-                <Square className="fill-current" />
+                <Button
+                  size="icon"
+                  disabled={
+                    !input.trim() ||
+                    state.sending ||
+                    state.settingModel ||
+                    state.settingThinkingLevel ||
+                    state.loading ||
+                    Boolean(anotherRunningSession)
+                  }
+                  title="发送"
+                  aria-label="发送"
+                  onClick={handleSend}
+                >
+                  {state.sending ? <Loader2 className="animate-spin" /> : <Send />}
+                </Button>
               )}
-            </Button>
-          ) : (
-            <Button
-              className="h-11 min-w-11"
-              disabled={
-                !input.trim() || state.sending || state.loading || Boolean(anotherRunningSession)
-              }
-              title="发送"
-              aria-label="发送"
-              onClick={handleSend}
-            >
-              {state.sending ? <Loader2 className="animate-spin" /> : <Send />}
-            </Button>
-          )}
+            </div>
+          </div>
         </div>
       </footer>
     </div>
