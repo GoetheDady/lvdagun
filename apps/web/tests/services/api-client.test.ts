@@ -59,4 +59,20 @@ describe('api 请求', () => {
     await expect(api.createSession()).resolves.toEqual({ sessionId: 'session-a' });
     expect(vi.mocked(fetch).mock.calls[0]![0]).toBe('/api/sessions');
   });
+
+  it('归档与删除使用按会话寻址的生命周期接口', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+
+    await api.archiveSession('session-a');
+    await api.deleteSession('session-a');
+
+    expect(vi.mocked(fetch).mock.calls[0]).toEqual([
+      '/api/sessions/session-a/archive',
+      { method: 'POST' },
+    ]);
+    expect(vi.mocked(fetch).mock.calls[1]).toEqual([
+      '/api/sessions/session-a',
+      { method: 'DELETE' },
+    ]);
+  });
 });

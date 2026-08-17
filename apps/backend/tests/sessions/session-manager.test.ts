@@ -111,6 +111,12 @@ function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
     createSession: vi.fn(async () => {
       const session = new FakeSession(`new-${nextId++}`);
       sessions.set(session.id, session);
+      stored.push({
+        id: session.id,
+        createdAt: session.createdAt,
+        updatedAt: session.createdAt,
+        messageCount: 0,
+      });
       return session;
     }),
     openSession: vi.fn(async (_config, sessionId) => {
@@ -118,6 +124,8 @@ function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
       sessions.set(sessionId, session);
       return session;
     }),
+    archiveSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
   };
   return { hub, sessions };
 }
@@ -138,7 +146,7 @@ describe('createSessionManager', () => {
     const { hub } = makeFakeHub();
     const manager = createSessionManager(hub, new FileConfigStore(join(dir, 'config.json')));
     await expect(manager.createSession()).rejects.toBeInstanceOf(NotConfiguredError);
-    await expect(manager.getSession('saved-a')).rejects.toBeInstanceOf(NotConfiguredError);
+    await expect(manager.getState('saved-a')).rejects.toBeInstanceOf(NotConfiguredError);
   });
 
   it('列出全部持久化会话并按 id 复用唯一 Runtime', async () => {
@@ -165,9 +173,8 @@ describe('createSessionManager', () => {
         isRunning: false,
       },
     ]);
-    const first = await manager.getSession('saved-a');
-    const second = await manager.getSession('saved-a');
-    expect(second).toBe(first);
+    await manager.getState('saved-a');
+    await manager.getState('saved-a');
     expect(hub.openSession).toHaveBeenCalledTimes(1);
   });
 
@@ -208,11 +215,60 @@ describe('createSessionManager', () => {
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
     const manager = createSessionManager(hub, store);
-    await manager.getSession('saved-a');
-    await manager.getSession('saved-b');
+    await manager.getState('saved-a');
+    await manager.getState('saved-b');
 
     await manager.invalidate();
     expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
     expect(sessions.get('saved-b')!.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('归档空闲会话时释放 Runtime 并广播生命周期事件', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+    const listener = vi.fn<(event: AgentStreamEvent) => void>();
+    await manager.subscribe('saved-a', listener);
+
+    await manager.archiveSession('saved-a');
+
+    expect(hub.archiveSession).toHaveBeenCalledWith('saved-a');
+    expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenLastCalledWith({
+      type: 'session_archived',
+      sessionId: 'saved-a',
+    });
+  });
+
+  it('删除空闲会话时释放 Runtime 并广播生命周期事件', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+    const listener = vi.fn<(event: AgentStreamEvent) => void>();
+    await manager.subscribe('saved-a', listener);
+
+    await manager.deleteSession('saved-a');
+
+    expect(hub.deleteSession).toHaveBeenCalledWith('saved-a');
+    expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenLastCalledWith({
+      type: 'session_deleted',
+      sessionId: 'saved-a',
+    });
+  });
+
+  it('拒绝归档或删除运行中的会话', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+    await manager.prompt('saved-a', '任务 A');
+
+    await expect(manager.archiveSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
+    await expect(manager.deleteSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
+    expect(hub.archiveSession).not.toHaveBeenCalled();
+    expect(hub.deleteSession).not.toHaveBeenCalled();
   });
 });

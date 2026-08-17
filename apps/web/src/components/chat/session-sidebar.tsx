@@ -1,8 +1,25 @@
-import { Loader2, MessageSquare, Plus, Settings } from 'lucide-react';
+import { useState } from 'react';
+import { Archive, Ellipsis, Loader2, MessageSquare, Plus, Settings, Trash2 } from 'lucide-react';
 
 import type { SessionSummary } from '@lvdagun/protocol';
 
-import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Button, buttonVariants } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   month: 'numeric',
@@ -16,9 +33,12 @@ export interface SessionSidebarProps {
   activeSessionId: string;
   loading: boolean;
   creating: boolean;
+  mutatingSessionId: string | null;
   error: string | null;
   onCreate: () => void;
   onSelect: (sessionId: string) => void;
+  onArchive: (sessionId: string) => void;
+  onDelete: (sessionId: string) => void;
   onSettings: () => void;
 }
 
@@ -33,83 +53,155 @@ export function SessionSidebar({
   activeSessionId,
   loading,
   creating,
+  mutatingSessionId,
   error,
   onCreate,
   onSelect,
+  onArchive,
+  onDelete,
   onSettings,
 }: SessionSidebarProps): React.JSX.Element {
+  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
+
   return (
-    <aside className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex h-14 shrink-0 items-center gap-2.5 px-4">
-        <img
-          alt=""
-          className="size-8 shrink-0 rounded-md"
-          height="32"
-          src="/brand/logo-512.png"
-          width="32"
-        />
-        <h1 className="truncate text-sm font-semibold">驴打滚</h1>
-      </div>
+    <>
+      <aside className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">
+        <div className="flex h-14 shrink-0 items-center gap-2.5 px-4">
+          <img
+            alt=""
+            className="size-8 shrink-0 rounded-md"
+            height="32"
+            src="/brand/logo-512.png"
+            width="32"
+          />
+          <h1 className="truncate text-sm font-semibold">驴打滚</h1>
+        </div>
 
-      <div className="p-3">
-        <Button className="w-full justify-start" disabled={creating} onClick={onCreate}>
-          {creating ? <Loader2 className="animate-spin" /> : <Plus />}
-          新对话
-        </Button>
-      </div>
+        <div className="p-3">
+          <Button className="w-full justify-start" disabled={creating} onClick={onCreate}>
+            {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+            新对话
+          </Button>
+        </div>
 
-      <nav aria-label="会话列表" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        {loading && sessions.length === 0 ? (
-          <div className="flex h-16 items-center justify-center text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-          </div>
-        ) : null}
-        {sessions.map((session) => {
-          const active = session.id === activeSessionId;
-          return (
-            <button
-              key={session.id}
-              type="button"
-              aria-current={active ? 'page' : undefined}
-              className={`mb-1 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors ${
-                active
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-              }`}
-              onClick={() => onSelect(session.id)}
-            >
-              <MessageSquare className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{session.title}</span>
-                <span
-                  className={`block text-[11px] ${active ? 'text-sidebar-primary-foreground/70' : 'text-muted-foreground'}`}
+        <nav aria-label="会话列表" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+          {loading && sessions.length === 0 ? (
+            <div className="flex h-16 items-center justify-center text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
+          ) : null}
+          {sessions.map((session) => {
+            const active = session.id === activeSessionId;
+            const mutating = mutatingSessionId === session.id;
+            const actionsDisabled = session.isRunning || mutating;
+            return (
+              <div
+                key={session.id}
+                className={`group relative mb-1 flex w-full items-stretch rounded-md transition-colors ${
+                  active
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                }`}
+              >
+                <button
+                  type="button"
+                  aria-label={`打开会话：${session.title}`}
+                  aria-current={active ? 'page' : undefined}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 pr-10 text-left"
+                  onClick={() => onSelect(session.id)}
                 >
-                  {DATE_FORMATTER.format(session.updatedAt)}
-                </span>
-              </span>
-              {session.isRunning ? (
-                <span
-                  className="size-1.5 shrink-0 animate-pulse rounded-full bg-soy"
-                  title="运行中"
-                  aria-label="运行中"
-                />
-              ) : null}
-            </button>
-          );
-        })}
-        {error ? <p className="px-2 py-2 text-xs text-destructive">{error}</p> : null}
-      </nav>
+                  <MessageSquare className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{session.title}</span>
+                      {session.isRunning ? (
+                        <span
+                          className="size-1.5 shrink-0 animate-pulse rounded-full bg-soy"
+                          title="运行中"
+                          aria-label="运行中"
+                        />
+                      ) : null}
+                    </span>
+                    <span
+                      className={`block text-[11px] ${active ? 'text-sidebar-primary-foreground/70' : 'text-muted-foreground'}`}
+                    >
+                      {DATE_FORMATTER.format(session.updatedAt)}
+                    </span>
+                  </span>
+                </button>
 
-      <div className="shrink-0 p-2">
-        <Button
-          className="w-full justify-start hover:bg-sidebar-accent"
-          variant="ghost"
-          onClick={onSettings}
-        >
-          <Settings />
-          设置
-        </Button>
-      </div>
-    </aside>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`更多操作：${session.title}`}
+                      className="absolute top-1.5 right-1.5 flex size-7 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                    >
+                      {mutating ? <Loader2 className="size-4 animate-spin" /> : <Ellipsis />}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" aria-label={`${session.title}会话操作`}>
+                    <DropdownMenuItem
+                      disabled={actionsDisabled}
+                      onSelect={() => onArchive(session.id)}
+                    >
+                      <Archive />
+                      归档
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={actionsDisabled}
+                      onSelect={() => setPendingDelete(session)}
+                      variant="destructive"
+                    >
+                      <Trash2 />
+                      删除
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            );
+          })}
+          {error ? <p className="px-2 py-2 text-xs text-destructive">{error}</p> : null}
+        </nav>
+
+        <div className="shrink-0 p-2">
+          <Button
+            className="w-full justify-start hover:bg-sidebar-accent"
+            variant="ghost"
+            onClick={onSettings}
+          >
+            <Settings />
+            设置
+          </Button>
+        </div>
+      </aside>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除会话？</AlertDialogTitle>
+            <AlertDialogDescription>
+              此操作将永久删除会话及其全部消息，无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              className={buttonVariants({ variant: 'destructive' })}
+              onClick={() => {
+                if (pendingDelete) onDelete(pendingDelete.id);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

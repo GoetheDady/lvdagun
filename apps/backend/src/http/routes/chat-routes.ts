@@ -27,6 +27,16 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
     res.status(201).json(result);
   });
 
+  app.post(SESSION_API_PATHS.archive, async (req, res) => {
+    await sessionManager.archiveSession(req.params.sessionId!);
+    res.status(204).end();
+  });
+
+  app.delete(SESSION_API_PATHS.state, async (req, res) => {
+    await sessionManager.deleteSession(req.params.sessionId!);
+    res.status(204).end();
+  });
+
   app.get(SESSION_API_PATHS.messages, async (req, res) => {
     res.json(await sessionManager.getMessages(req.params.sessionId!));
   });

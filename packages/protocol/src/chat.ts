@@ -19,8 +19,29 @@ export interface SessionStateEvent {
   state: AgentSessionState;
 }
 
+/** 会话归档后由 Hub 广播的生命周期事件 */
+export interface SessionArchivedEvent {
+  /** 当前会话已归档，不再允许通过普通会话接口访问 */
+  type: 'session_archived';
+  /** 生命周期发生变化的不透明会话标识 */
+  sessionId: string;
+}
+
+/** 会话永久删除后由 Hub 广播的生命周期事件 */
+export interface SessionDeletedEvent {
+  /** 当前会话及其本地数据已永久删除 */
+  type: 'session_deleted';
+  /** 生命周期发生变化的不透明会话标识 */
+  sessionId: string;
+}
+
 /** SSE 传输的 Pi JSON 事件与驴打滚会话状态事件 */
-export type AgentStreamEvent = JsonAgentSessionEvent | SessionModelChangedEvent | SessionStateEvent;
+export type AgentStreamEvent =
+  | JsonAgentSessionEvent
+  | SessionModelChangedEvent
+  | SessionStateEvent
+  | SessionArchivedEvent
+  | SessionDeletedEvent;
 
 /** Pi 会话中的结构化消息 */
 export type ChatMessage = AgentMessage;

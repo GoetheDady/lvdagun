@@ -126,6 +126,26 @@ describe('chatReducer', () => {
     expect(initialState.activeAssistant).toBeNull();
     expect(initialState.loading).toBe(true);
     expect(initialState.retries).toEqual([]);
+    expect(initialState.unavailableReason).toBeNull();
+  });
+
+  it.each([
+    [{ type: 'session_archived', sessionId: 'session-a' } as const, 'archived'],
+    [{ type: 'session_deleted', sessionId: 'session-a' } as const, 'missing'],
+  ])('生命周期事件 %s 清除会话内容', (event, unavailableReason) => {
+    const state = chatReducer(
+      {
+        ...initialState,
+        loading: false,
+        messages: [{ role: 'user', content: '敏感内容', timestamp: 1 }],
+        session: stateCopy(),
+      },
+      { type: 'pi_event', event }
+    );
+
+    expect(state.messages).toEqual([]);
+    expect(state.session).toBeNull();
+    expect(state.unavailableReason).toBe(unavailableReason);
   });
 
   it('初始化时恢复服务端仍在进行的自动压缩', () => {
@@ -390,9 +410,7 @@ describe('useChatSession', () => {
     const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
 
-    await act(async () =>
-      result.current.setModel({ provider: 'openai', id: 'gpt-a' })
-    );
+    await act(async () => result.current.setModel({ provider: 'openai', id: 'gpt-a' }));
     expect(api.setSessionModel).toHaveBeenCalledWith('session-a', {
       provider: 'openai',
       id: 'gpt-a',

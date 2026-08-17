@@ -15,7 +15,12 @@ import type {
 } from '@lvdagun/protocol';
 
 import type { FileConfigStore } from '../../src/config/config-store';
-import type { Hub, HubSession } from '../../src/hub/hub';
+import {
+  SessionArchivedError,
+  SessionNotFoundError,
+  type Hub,
+  type HubSession,
+} from '../../src/hub/hub';
 import { createServer } from '../../src/http/server';
 
 export const validConfig: ModelConfig = {
@@ -42,7 +47,7 @@ const availableModels: AvailableModel[] = [
  * @param stopReason - Pi 结束原因
  * @returns 完整助手消息
  */
-export function assistantMessage(
+function assistantMessage(
   text: string,
   timestamp: number,
   stopReason: 'pending' | 'stop' | 'aborted' = 'stop'
@@ -241,6 +246,8 @@ export function makeFakeHub(): {
 } {
   const sessions: FakeSession[] = [];
   const createOptions: ModelConfig[] = [];
+  const archivedSessionIds = new Set<string>();
+  const deletedSessionIds = new Set<string>();
   let nextSessionId = 1;
 
   /** @param sessionId - 会话标识 @returns 已有或新建的测试会话 */
@@ -277,9 +284,21 @@ export function makeFakeHub(): {
       return getOrCreateSession(`session-${nextSessionId++}`);
     }),
     openSession: vi.fn(async (_options, sessionId) => {
+      if (archivedSessionIds.has(sessionId)) throw new SessionArchivedError(sessionId);
+      if (deletedSessionIds.has(sessionId)) throw new SessionNotFoundError(sessionId);
       const session = new FakeSession(sessionId);
       sessions.push(session);
       return session;
+    }),
+    archiveSession: vi.fn(async (sessionId) => {
+      archivedSessionIds.add(sessionId);
+      const index = sessions.findIndex((session) => session.id === sessionId);
+      if (index >= 0) sessions.splice(index, 1);
+    }),
+    deleteSession: vi.fn(async (sessionId) => {
+      deletedSessionIds.add(sessionId);
+      const index = sessions.findIndex((session) => session.id === sessionId);
+      if (index >= 0) sessions.splice(index, 1);
     }),
   };
   return { hub, sessions, createOptions };

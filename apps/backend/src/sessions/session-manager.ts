@@ -5,7 +5,6 @@ import type {
   AgentSessionState,
   AgentStreamEvent,
   ChatMessage,
-  ModelConfig,
   ModelReference,
   SessionSummary,
   ThinkingLevel,
@@ -38,13 +37,11 @@ export interface SessionManager {
   /** @returns 新建持久化会话的不透明标识 */
   createSession(): Promise<string>;
 
-  /**
-   * 获取或懒加载指定会话。
-   *
-   * @param sessionId - 会话标识
-   * @returns 唯一的 Hub 会话实例
-   */
-  getSession(sessionId: string): Promise<HubSession>;
+  /** @param sessionId - 会话标识 @returns 归档完成后的 Promise */
+  archiveSession(sessionId: string): Promise<void>;
+
+  /** @param sessionId - 会话标识 @returns 永久删除完成后的 Promise */
+  deleteSession(sessionId: string): Promise<void>;
 
   /** @param sessionId - 会话标识 @returns 结构化消息历史 */
   getMessages(sessionId: string): Promise<ChatMessage[]>;
@@ -107,24 +104,15 @@ export interface SessionManager {
  */
 export function createSessionManager(hub: Hub, configStore: ConfigStore): SessionManager {
   const records = new Map<string, Promise<SessionRecord>>();
-  let configKey: string | null = null;
+  const lifecycleSessionIds = new Set<string>();
   let runningSessionId: string | null = null;
 
-  /** @param config - 模型配置 @returns 稳定配置指纹 */
-  const keyOf = (config: ModelConfig): string =>
-    `${config.provider}\n${config.modelId}\n${config.apiKey}`;
-
-  /** @returns 当前有效配置；配置变化时先释放旧 Runtime */
-  const loadConfig = async (): Promise<ModelConfig> => {
+  /** @returns 当前有效配置 */
+  const loadConfig = async () => {
     const config = await configStore.load();
     if (!config) {
       throw new NotConfiguredError();
     }
-    const nextKey = keyOf(config);
-    if (configKey !== null && configKey !== nextKey) {
-      await disposeAll();
-    }
-    configKey = nextKey;
     return config;
   };
 
@@ -178,9 +166,16 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
    * @returns 会话注册记录
    */
   const getRecord = async (sessionId: string): Promise<SessionRecord> => {
+    if (lifecycleSessionIds.has(sessionId)) {
+      throw new AgentBusyError();
+    }
     const existing = records.get(sessionId);
     if (existing) {
-      return existing;
+      const record = await existing;
+      if (lifecycleSessionIds.has(sessionId)) {
+        throw new AgentBusyError();
+      }
+      return record;
     }
 
     const loading = (async (): Promise<SessionRecord> => {
@@ -191,10 +186,60 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     })();
     records.set(sessionId, loading);
     try {
-      return await loading;
+      const record = await loading;
+      if (lifecycleSessionIds.has(sessionId)) {
+        throw new AgentBusyError();
+      }
+      return record;
     } catch (error) {
       records.delete(sessionId);
       throw error;
+    }
+  };
+
+  /**
+   * 在会话空闲时释放 Runtime、提交生命周期变化并通知全部订阅者。
+   *
+   * 生命周期标记先于任何异步步骤写入，避免新的提示或模型变更在检查后穿透。
+   *
+   * @param sessionId - 会话标识
+   * @param event - 提交成功后广播的生命周期事件
+   * @param mutate - Hub 持久化操作
+   * @returns 生命周期变化完成后的 Promise
+   */
+  const changeLifecycle = async (
+    sessionId: string,
+    event: Extract<AgentStreamEvent, { type: 'session_archived' | 'session_deleted' }>,
+    mutate: () => Promise<void>
+  ): Promise<void> => {
+    if (lifecycleSessionIds.has(sessionId)) {
+      throw new AgentBusyError();
+    }
+    lifecycleSessionIds.add(sessionId);
+    try {
+      const pendingRecord = records.get(sessionId);
+      const record = pendingRecord ? await pendingRecord.catch(() => null) : null;
+      if (record?.session.getState().isRunning) {
+        throw new AgentBusyError();
+      }
+
+      if (record) {
+        record.unsubscribe();
+        await record.session.dispose();
+      }
+      records.delete(sessionId);
+      if (runningSessionId === sessionId) {
+        runningSessionId = null;
+      }
+
+      await mutate();
+      if (record) {
+        for (const listener of record.listeners) {
+          listener(event);
+        }
+      }
+    } finally {
+      lifecycleSessionIds.delete(sessionId);
     }
   };
 
@@ -220,25 +265,6 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
         });
       }
 
-      for (const record of loadedById.values()) {
-        if (summaries.has(record.session.id)) {
-          continue;
-        }
-        const messages = record.session.getMessages();
-        const updatedAt = messages.reduce(
-          (latest, message) => Math.max(latest, message.timestamp),
-          record.createdAt
-        );
-        summaries.set(record.session.id, {
-          id: record.session.id,
-          title: '新对话',
-          createdAt: record.createdAt,
-          updatedAt,
-          messageCount: messages.length,
-          isRunning: record.session.getState().isRunning,
-        });
-      }
-
       return [...summaries.values()].sort((left, right) => right.updatedAt - left.updatedAt);
     },
 
@@ -249,8 +275,16 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       return session.id;
     },
 
-    async getSession(sessionId: string): Promise<HubSession> {
-      return (await getRecord(sessionId)).session;
+    async archiveSession(sessionId: string): Promise<void> {
+      await changeLifecycle(sessionId, { type: 'session_archived', sessionId }, async () =>
+        hub.archiveSession(sessionId)
+      );
+    },
+
+    async deleteSession(sessionId: string): Promise<void> {
+      await changeLifecycle(sessionId, { type: 'session_deleted', sessionId }, async () =>
+        hub.deleteSession(sessionId)
+      );
     },
 
     async getMessages(sessionId: string): Promise<ChatMessage[]> {
@@ -301,7 +335,6 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     async invalidate(): Promise<void> {
       await disposeAll();
-      configKey = null;
     },
   };
 }

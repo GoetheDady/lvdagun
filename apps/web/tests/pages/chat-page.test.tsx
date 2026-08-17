@@ -16,6 +16,8 @@ vi.mock('@/services/api-client', () => ({
   api: {
     listSessions: vi.fn(),
     createSession: vi.fn(),
+    archiveSession: vi.fn(),
+    deleteSession: vi.fn(),
     getMessages: vi.fn(),
     getSessionState: vi.fn(),
     prompt: vi.fn(),
@@ -100,6 +102,8 @@ beforeEach(() => {
     },
   ]);
   vi.mocked(api.createSession).mockResolvedValue({ sessionId: 'session-b' });
+  vi.mocked(api.archiveSession).mockResolvedValue(undefined);
+  vi.mocked(api.deleteSession).mockResolvedValue(undefined);
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(sessionState);
   vi.mocked(api.prompt).mockResolvedValue(undefined);
@@ -350,17 +354,96 @@ describe('ChatPage', () => {
     ]);
     renderChatPage();
     const navigation = await screen.findByRole('navigation', { name: '会话列表' });
-    await waitFor(() => expect(within(navigation).getAllByRole('button')).toHaveLength(2));
+    await waitFor(() =>
+      expect(within(navigation).getAllByRole('button', { name: /打开会话：新对话/ })).toHaveLength(
+        2
+      )
+    );
     vi.mocked(api.listSessions).mockImplementation(() => new Promise(() => {}));
 
-    await userEvent.click(within(navigation).getAllByRole('button')[1]!);
+    await userEvent.click(
+      within(navigation).getAllByRole('button', { name: /打开会话：新对话/ })[1]!
+    );
     await waitFor(() => expect(api.getMessages).toHaveBeenCalledWith('session-b'));
 
     const currentNavigation = screen.getByRole('navigation', { name: '会话列表' });
-    const sessionButtons = within(currentNavigation).getAllByRole('button');
+    const sessionButtons = within(currentNavigation).getAllByRole('button', {
+      name: /打开会话：新对话/,
+    });
     expect(sessionButtons).toHaveLength(2);
     expect(sessionButtons[1]).toHaveAttribute('aria-current', 'page');
     expect(currentNavigation.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('通过会话三点菜单直接归档并显示归档空状态', async () => {
+    vi.mocked(api.archiveSession).mockImplementation(async () => {
+      vi.mocked(api.listSessions).mockResolvedValue([]);
+    });
+    renderChatPage();
+    await userEvent.click(await screen.findByRole('button', { name: '更多操作：新对话' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '归档' }));
+
+    await waitFor(() => expect(api.archiveSession).toHaveBeenCalledWith('session-a'));
+    act(() => captured.onEvent?.({ type: 'session_archived', sessionId: 'session-a' }));
+    expect(await screen.findByRole('heading', { name: '当前会话已归档' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('navigation', { name: '会话列表' })).queryByRole('button', {
+          name: /打开会话：新对话/,
+        })
+      ).not.toBeInTheDocument()
+    );
+  });
+
+  it('删除会话前二次确认，确认后显示不可用空状态', async () => {
+    vi.mocked(api.deleteSession).mockImplementation(async () => {
+      vi.mocked(api.listSessions).mockResolvedValue([]);
+    });
+    renderChatPage();
+    await userEvent.click(await screen.findByRole('button', { name: '更多操作：新对话' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '删除' }));
+
+    const dialog = screen.getByRole('alertdialog');
+    expect(
+      within(dialog).getByText('此操作将永久删除会话及其全部消息，无法撤销。')
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: '删除' }));
+
+    await waitFor(() => expect(api.deleteSession).toHaveBeenCalledWith('session-a'));
+    act(() => captured.onEvent?.({ type: 'session_deleted', sessionId: 'session-a' }));
+    expect(
+      await screen.findByRole('heading', { name: '当前会话不存在或不可显示' })
+    ).toBeInTheDocument();
+  });
+
+  it('运行中的会话禁用归档和删除', async () => {
+    vi.mocked(api.listSessions).mockResolvedValue([
+      {
+        id: 'session-a',
+        title: '新对话',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: 0,
+        isRunning: true,
+      },
+    ]);
+    renderChatPage();
+    await userEvent.click(await screen.findByRole('button', { name: '更多操作：新对话' }));
+
+    expect(screen.getByRole('menuitem', { name: '归档' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('menuitem', { name: '删除' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it.each([
+    [410, '当前会话已归档'],
+    [404, '当前会话不存在或不可显示'],
+  ])('初始化返回 %s 时显示对应不可用状态', async (status, heading) => {
+    vi.mocked(api.getMessages).mockRejectedValueOnce(
+      Object.assign(new Error('会话不可用'), { status })
+    );
+    renderChatPage();
+
+    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument();
   });
 
   it('SSE 结构化消息事件会进入当前对话记录', async () => {

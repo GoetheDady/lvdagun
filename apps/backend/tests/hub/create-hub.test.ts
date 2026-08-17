@@ -34,6 +34,14 @@ const pi = vi.hoisted(() => ({
     resourceLoaderOptions: null as null | Record<string, unknown>,
     openSessionPaths: [] as string[],
     persistedFiles: [] as Array<{ path: string; content: string }>,
+    deletedPaths: [] as string[],
+    archivedSessionInfos: [] as Array<{
+      id: string;
+      path: string;
+      created: Date;
+      modified: Date;
+      messageCount: number;
+    }>,
     sessionInfos: [] as Array<{
       id: string;
       path: string;
@@ -47,6 +55,18 @@ const pi = vi.hoisted(() => ({
 vi.mock('node:fs/promises', () => ({
   writeFile: async (path: string, content: string) => {
     pi.state.persistedFiles.push({ path, content });
+  },
+  mkdir: async () => {},
+  rename: async (from: string, to: string) => {
+    const session = pi.state.sessionInfos.find((candidate) => candidate.path === from);
+    if (session) {
+      pi.state.sessionInfos = pi.state.sessionInfos.filter((candidate) => candidate !== session);
+      pi.state.archivedSessionInfos.push({ ...session, path: to });
+    }
+  },
+  unlink: async (path: string) => {
+    pi.state.deletedPaths.push(path);
+    pi.state.sessionInfos = pi.state.sessionInfos.filter((session) => session.path !== path);
   },
 }));
 
@@ -88,19 +108,15 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     streamSimple: (_model: unknown, _context: unknown, options?: { apiKey?: string }) => {
       pi.state.streamApiKeys.push(options?.apiKey);
       return {
-      result: async () => {
-        if (pi.state.streamResult instanceof Error) {
-          throw pi.state.streamResult;
-        }
-        return pi.state.streamResult;
-      },
+        result: async () => {
+          if (pi.state.streamResult instanceof Error) {
+            throw pi.state.streamResult;
+          }
+          return pi.state.streamResult;
+        },
       };
     },
-    login: async (
-      provider: string,
-      type: string,
-      interaction: { prompt(): Promise<string> }
-    ) => {
+    login: async (provider: string, type: string, interaction: { prompt(): Promise<string> }) => {
       pi.state.loginCalls.push({ provider, type, apiKey: await interaction.prompt() });
     },
   };
@@ -204,7 +220,10 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
         pi.state.openSessionPaths.push(path);
         return sessionManager;
       },
-      listAll: async () => pi.state.sessionInfos,
+      listAll: async (sessionDir: string) =>
+        sessionDir.endsWith('/archived-sessions')
+          ? pi.state.archivedSessionInfos
+          : pi.state.sessionInfos,
     },
     createAgentSessionServices: async (options: {
       resourceLoaderOptions: Record<string, unknown>;
@@ -293,6 +312,8 @@ beforeEach(() => {
   pi.state.resourceLoaderOptions = null;
   pi.state.openSessionPaths = [];
   pi.state.persistedFiles = [];
+  pi.state.deletedPaths = [];
+  pi.state.archivedSessionInfos = [];
   pi.state.sessionInfos = [];
 });
 
@@ -472,6 +493,39 @@ describe('createHub 会话能力', () => {
     await expect(
       hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'missing')
     ).rejects.toThrow('会话不存在:missing');
+  });
+
+  it('把归档会话移出活跃目录并永久删除未归档会话文件', async () => {
+    pi.state.sessionInfos = [
+      {
+        id: 'archived',
+        path: '/tmp/lvdagun-test/sessions/archived.jsonl',
+        created: new Date(10),
+        modified: new Date(20),
+        messageCount: 2,
+      },
+      {
+        id: 'deleted',
+        path: '/tmp/lvdagun-test/sessions/deleted.jsonl',
+        created: new Date(30),
+        modified: new Date(40),
+        messageCount: 1,
+      },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+
+    await hub.archiveSession('archived');
+    await expect(hub.listSessions()).resolves.toEqual([
+      { id: 'deleted', createdAt: 30, updatedAt: 40, messageCount: 1 },
+    ]);
+    await expect(
+      hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'archived')
+    ).rejects.toThrow('会话已归档:archived');
+    await expect(hub.deleteSession('archived')).rejects.toThrow('会话已归档:archived');
+
+    await hub.deleteSession('deleted');
+    expect(pi.state.deletedPaths).toEqual(['/tmp/lvdagun-test/sessions/deleted.jsonl']);
+    await expect(hub.listSessions()).resolves.toEqual([]);
   });
 
   it('恢复空会话分支中已持久化的会话模型', async () => {

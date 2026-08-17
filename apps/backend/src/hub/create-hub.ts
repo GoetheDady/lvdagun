@@ -3,9 +3,9 @@
  *
  * 本模块是本地服务中唯一创建 Pi 运行时和会话的地方。
  */
-import { writeFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   type CreateAgentSessionRuntimeFactory,
@@ -23,7 +23,7 @@ import type {
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import { SessionNotFoundError, type Hub, type HubSession } from './hub';
+import { SessionArchivedError, SessionNotFoundError, type Hub, type HubSession } from './hub';
 import { PiHubSession } from './pi-hub-session';
 
 const INFRA_PROVIDERS = new Set([
@@ -47,6 +47,7 @@ export function createHub(options: { dataDir: string }): Hub {
   const { dataDir } = options;
   const cwd = homedir();
   const sessionDir = join(dataDir, 'sessions');
+  const archiveDir = join(dataDir, 'archived-sessions');
   let runtimePromise: Promise<ModelRuntime> | null = null;
 
   /**
@@ -173,6 +174,26 @@ export function createHub(options: { dataDir: string }): Hub {
     return PiSessionManager.open(sessionFile, sessionDir);
   };
 
+  /**
+   * 查找一个可通过普通会话接口访问的 Pi 会话文件。
+   *
+   * @param sessionId - 不透明会话标识
+   * @returns Pi 会话目录中的文件摘要
+   * @throws 会话已归档或不存在
+   */
+  const findAvailableSession = async (sessionId: string) => {
+    const stored = (await PiSessionManager.listAll(sessionDir)).find(
+      (session) => session.id === sessionId
+    );
+    if (stored) {
+      return stored;
+    }
+    const archived = (await PiSessionManager.listAll(archiveDir)).some(
+      (session) => session.id === sessionId
+    );
+    throw archived ? new SessionArchivedError(sessionId) : new SessionNotFoundError(sessionId);
+  };
+
   return {
     async listProviders(): Promise<ProviderInfo[]> {
       const runtime = await getRuntime();
@@ -253,13 +274,19 @@ export function createHub(options: { dataDir: string }): Hub {
     },
 
     async openSession(config, sessionId) {
-      const stored = (await PiSessionManager.listAll(sessionDir)).find(
-        (session) => session.id === sessionId
-      );
-      if (!stored) {
-        throw new SessionNotFoundError(sessionId);
-      }
+      const stored = await findAvailableSession(sessionId);
       return createHubSession(config, PiSessionManager.open(stored.path, sessionDir));
+    },
+
+    async archiveSession(sessionId) {
+      const stored = await findAvailableSession(sessionId);
+      await mkdir(archiveDir, { recursive: true, mode: 0o700 });
+      await rename(stored.path, join(archiveDir, basename(stored.path)));
+    },
+
+    async deleteSession(sessionId) {
+      const stored = await findAvailableSession(sessionId);
+      await unlink(stored.path);
     },
   };
 }

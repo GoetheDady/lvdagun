@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionSummary } from '@lvdagun/protocol';
 
@@ -9,9 +9,14 @@ export interface SessionList {
   sessions: SessionSummary[];
   loading: boolean;
   creating: boolean;
+  mutatingSessionId: string | null;
   error: string | null;
   /** @returns 新会话标识 */
   createSession(): Promise<string | null>;
+  /** @param sessionId - 会话标识 @returns 是否归档成功 */
+  archiveSession(sessionId: string): Promise<boolean>;
+  /** @param sessionId - 会话标识 @returns 是否删除成功 */
+  deleteSession(sessionId: string): Promise<boolean>;
   /** @returns 列表刷新完成后的 Promise */
   refresh(): Promise<void>;
 }
@@ -28,6 +33,8 @@ export function useSessionList(): SessionList {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [mutatingSessionId, setMutatingSessionId] = useState<string | null>(null);
+  const mutationRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   /**
@@ -77,5 +84,57 @@ export function useSessionList(): SessionList {
     }
   }, [creating, refresh]);
 
-  return { sessions, loading, creating, error, createSession, refresh };
+  /**
+   * 执行会话生命周期操作并立即从普通列表移除目标会话。
+   *
+   * @param sessionId - 会话标识
+   * @param operation - 归档或删除接口调用
+   * @returns 操作是否成功
+   */
+  const mutateSession = useCallback(
+    async (sessionId: string, operation: (id: string) => Promise<void>): Promise<boolean> => {
+      if (mutationRef.current !== null) {
+        return false;
+      }
+      mutationRef.current = sessionId;
+      setMutatingSessionId(sessionId);
+      try {
+        await operation(sessionId);
+        setSessions((current) => current.filter((session) => session.id !== sessionId));
+        setError(null);
+        return true;
+      } catch (mutationError) {
+        setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
+        return false;
+      } finally {
+        mutationRef.current = null;
+        setMutatingSessionId(null);
+      }
+    },
+    []
+  );
+
+  /** @param sessionId - 会话标识 @returns 是否归档成功 */
+  const archiveSession = useCallback(
+    (sessionId: string): Promise<boolean> => mutateSession(sessionId, api.archiveSession),
+    [mutateSession]
+  );
+
+  /** @param sessionId - 会话标识 @returns 是否删除成功 */
+  const deleteSession = useCallback(
+    (sessionId: string): Promise<boolean> => mutateSession(sessionId, api.deleteSession),
+    [mutateSession]
+  );
+
+  return {
+    sessions,
+    loading,
+    creating,
+    mutatingSessionId,
+    error,
+    createSession,
+    archiveSession,
+    deleteSession,
+    refresh,
+  };
 }

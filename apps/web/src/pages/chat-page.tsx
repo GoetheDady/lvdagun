@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { Archive, Loader2, MessageSquareOff, RotateCcw, Send, Square } from 'lucide-react';
 import { useDefaultLayout } from 'react-resizable-panels';
 
 import { SessionSidebar } from '@/components/chat/session-sidebar';
@@ -9,7 +9,7 @@ import { ModelSelector } from '@/components/chat/model-selector';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { useChatSession } from '@/hooks/use-chat-session';
+import { type SessionUnavailableReason, useChatSession } from '@/hooks/use-chat-session';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 
 /** 空会话中可直接填入输入框的示例提示。 */
@@ -58,6 +58,26 @@ function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
     });
   };
 
+  /**
+   * 归档指定会话。
+   *
+   * @param targetSessionId - 要归档的会话标识
+   * @returns 无返回值
+   */
+  const handleArchiveSession = (targetSessionId: string): void => {
+    void sessionList.archiveSession(targetSessionId);
+  };
+
+  /**
+   * 永久删除指定会话。
+   *
+   * @param targetSessionId - 要永久删除的会话标识
+   * @returns 无返回值
+   */
+  const handleDeleteSession = (targetSessionId: string): void => {
+    void sessionList.deleteSession(targetSessionId);
+  };
+
   return (
     <main className="flex h-dvh min-h-[32rem] min-w-[64rem] overflow-hidden bg-background">
       <ResizablePanelGroup id={CHAT_LAYOUT_ID} orientation="horizontal" {...persistedLayout}>
@@ -73,9 +93,12 @@ function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
             activeSessionId={sessionId}
             loading={sessionList.loading}
             creating={sessionList.creating}
+            mutatingSessionId={sessionList.mutatingSessionId}
             error={sessionList.error}
             onCreate={handleNewSession}
             onSelect={(selectedId) => navigate(`/sessions/${encodeURIComponent(selectedId)}`)}
+            onArchive={handleArchiveSession}
+            onDelete={handleDeleteSession}
             onSettings={() => navigate('/settings')}
           />
         </ResizablePanel>
@@ -132,7 +155,11 @@ function ChatWorkspace({
 
   useEffect(() => {
     void refreshSessionList();
-  }, [refreshSessionList, state.isRunning]);
+  }, [refreshSessionList, state.isRunning, state.unavailableReason]);
+
+  if (state.unavailableReason) {
+    return <UnavailableWorkspace reason={state.unavailableReason} />;
+  }
 
   /**
    * 校验并发送当前输入。
@@ -181,7 +208,6 @@ function ChatWorkspace({
                 : '就绪'}
           </p>
         </div>
-
       </header>
 
       <section className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -263,9 +289,7 @@ function ChatWorkspace({
                   <ModelSelector
                     value={state.session.model}
                     models={state.session.availableModels}
-                    disabled={
-                      state.isRunning || state.settingModel || state.settingThinkingLevel
-                    }
+                    disabled={state.isRunning || state.settingModel || state.settingThinkingLevel}
                     loading={state.settingModel}
                     onSelect={(model) => void setModel(model)}
                   />
@@ -317,6 +341,35 @@ function ChatWorkspace({
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/**
+ * 渲染已归档、已删除或不存在会话的稳定空状态。
+ *
+ * @param props - 会话不可显示的原因
+ * @returns 不暴露原会话内容的工作区
+ */
+function UnavailableWorkspace({ reason }: { reason: SessionUnavailableReason }): React.JSX.Element {
+  const archived = reason === 'archived';
+  const Icon = archived ? Archive : MessageSquareOff;
+  return (
+    <div className="flex h-full min-w-0 flex-1 flex-col">
+      <header className="flex h-14 shrink-0 items-center px-5">
+        <div>
+          <h2 className="text-sm font-semibold">当前会话</h2>
+          <p className="text-[11px] text-muted-foreground">{archived ? '已归档' : '不可显示'}</p>
+        </div>
+      </header>
+      <section className="flex min-h-0 flex-1 items-center justify-center px-5 py-8 text-center">
+        <div className="flex max-w-sm flex-col items-center gap-3">
+          <Icon className="size-8 text-muted-foreground" aria-hidden="true" />
+          <h3 className="text-base font-semibold">
+            {archived ? '当前会话已归档' : '当前会话不存在或不可显示'}
+          </h3>
+        </div>
+      </section>
     </div>
   );
 }

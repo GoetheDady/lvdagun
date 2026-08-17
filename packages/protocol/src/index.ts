@@ -10,6 +10,8 @@ export type {
   ChatMessage,
   CompactionReason,
   CreateSessionResult,
+  SessionArchivedEvent,
+  SessionDeletedEvent,
   SessionModelChangedEvent,
   SessionStateEvent,
   SessionSummary,

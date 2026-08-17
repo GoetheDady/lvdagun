@@ -158,4 +158,65 @@ describe('对话接口', () => {
       await close();
     }
   });
+
+  it('归档会话后返回 204，后续普通访问返回 410', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      await fetch(`${baseUrl}/api/sessions/session-1`);
+      const archived = await fetch(`${baseUrl}/api/sessions/session-1/archive`, {
+        method: 'POST',
+      });
+      expect(archived.status).toBe(204);
+
+      const unavailable = await fetch(`${baseUrl}/api/sessions/session-1`);
+      expect(unavailable.status).toBe(410);
+      await expect(unavailable.json()).resolves.toEqual({ error: '会话已归档:session-1' });
+    } finally {
+      await close();
+    }
+  });
+
+  it('永久删除会话后返回 204，后续普通访问返回 404', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      await fetch(`${baseUrl}/api/sessions/session-1`);
+      const deleted = await fetch(`${baseUrl}/api/sessions/session-1`, { method: 'DELETE' });
+      expect(deleted.status).toBe(204);
+
+      const unavailable = await fetch(`${baseUrl}/api/sessions/session-1`);
+      expect(unavailable.status).toBe(404);
+      await expect(unavailable.json()).resolves.toEqual({ error: '会话不存在:session-1' });
+    } finally {
+      await close();
+    }
+  });
+
+  it('运行中的会话拒绝归档和删除', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '执行任务' }),
+      });
+
+      const archived = await fetch(`${baseUrl}/api/sessions/session-1/archive`, {
+        method: 'POST',
+      });
+      const deleted = await fetch(`${baseUrl}/api/sessions/session-1`, { method: 'DELETE' });
+      expect(archived.status).toBe(409);
+      expect(deleted.status).toBe(409);
+    } finally {
+      await close();
+    }
+  });
 });

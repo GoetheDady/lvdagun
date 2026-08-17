@@ -14,6 +14,23 @@ import {
   type ThinkingLevel,
 } from '@lvdagun/protocol';
 
+/** 本地服务返回的带 HTTP 状态码的请求错误。 */
+class ApiError extends Error {
+  /**
+   * 创建接口错误。
+   *
+   * @param status - HTTP 状态码
+   * @param message - 服务端错误说明
+   */
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 /**
  * 发起 HTTP 请求，并把非成功响应转换为错误。
  *
@@ -26,7 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `请求失败(${response.status})`);
+    throw new ApiError(response.status, body?.error ?? `请求失败(${response.status})`);
   }
   if (response.status === 202 || response.status === 204) {
     return undefined as T;
@@ -62,6 +79,12 @@ export const api = {
   createSession: (): Promise<CreateSessionResult> =>
     request(API_PATHS.sessions, { method: 'POST' }),
 
+  archiveSession: (sessionId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).archive, { method: 'POST' }),
+
+  deleteSession: (sessionId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).state, { method: 'DELETE' }),
+
   getMessages: (sessionId: string): Promise<ChatMessage[]> =>
     request(sessionApiPaths(sessionId).messages),
 
@@ -85,10 +108,7 @@ export const api = {
       body: JSON.stringify({ level }),
     }),
 
-  setSessionModel: (
-    sessionId: string,
-    model: ModelReference
-  ): Promise<AgentSessionState> =>
+  setSessionModel: (sessionId: string, model: ModelReference): Promise<AgentSessionState> =>
     request(sessionApiPaths(sessionId).model, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },

@@ -20,7 +20,7 @@ type AssistantUpdate = Extract<
 >['assistantMessageEvent'];
 
 /** 对话操作错误。 */
-export interface ChatError {
+interface ChatError {
   /** 面向用户的错误说明 */
   message: string;
   /** 是否可通过重发最后一条用户消息恢复 */
@@ -56,6 +56,9 @@ export interface CompactionState {
   message?: string;
 }
 
+/** 当前 URL 指向的会话无法继续显示的原因。 */
+export type SessionUnavailableReason = 'archived' | 'missing';
+
 /** 对话会话的完整客户端状态。 */
 export interface ChatSessionState {
   messages: ChatMessage[];
@@ -70,6 +73,7 @@ export interface ChatSessionState {
   aborting: boolean;
   settingThinkingLevel: boolean;
   settingModel: boolean;
+  unavailableReason: SessionUnavailableReason | null;
   error: ChatError | null;
 }
 
@@ -87,6 +91,7 @@ export const initialState: ChatSessionState = {
   aborting: false,
   settingThinkingLevel: false,
   settingModel: false,
+  unavailableReason: null,
   error: null,
 };
 
@@ -103,6 +108,7 @@ export type ChatSessionAction =
   | { type: 'thinking_level_finished'; session: AgentSessionState }
   | { type: 'model_started' }
   | { type: 'model_finished'; session: AgentSessionState }
+  | { type: 'unavailable'; reason: SessionUnavailableReason }
   | { type: 'operation_failed'; message: string; retryable: boolean };
 
 /**
@@ -111,7 +117,7 @@ export type ChatSessionAction =
  * @param message - Pi 结构化消息
  * @returns 消息中的所有文本块；没有文本时返回空字符串
  */
-export function getMessageText(message: ChatMessage): string {
+function getMessageText(message: ChatMessage): string {
   if (message.role !== 'user') {
     return '';
   }
@@ -407,6 +413,10 @@ function reducePiEvent(
         session: event.state,
         isRunning: event.state.isRunning,
       };
+    case 'session_archived':
+      return unavailableState(state, 'archived');
+    case 'session_deleted':
+      return unavailableState(state, 'missing');
     case 'agent_end':
     case 'turn_start':
     case 'turn_end':
@@ -416,6 +426,36 @@ function reducePiEvent(
     case 'bash_execution_update':
       return state;
   }
+}
+
+/**
+ * 清除不可再访问会话的内容和运行状态。
+ *
+ * @param state - 当前会话状态
+ * @param reason - 会话不可显示的原因
+ * @returns 不再暴露原会话内容的空状态
+ */
+function unavailableState(
+  state: ChatSessionState,
+  reason: SessionUnavailableReason
+): ChatSessionState {
+  return {
+    ...state,
+    messages: [],
+    activeAssistant: null,
+    toolRuns: {},
+    retries: [],
+    compaction: null,
+    session: null,
+    isRunning: false,
+    loading: false,
+    sending: false,
+    aborting: false,
+    settingThinkingLevel: false,
+    settingModel: false,
+    unavailableReason: reason,
+    error: null,
+  };
 }
 
 /**
@@ -437,6 +477,7 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
           ? { status: 'running', reason: action.session.activeCompaction.reason }
           : null,
         loading: false,
+        unavailableReason: null,
         error: null,
       };
     case 'history_loaded':
@@ -477,6 +518,8 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         isRunning: action.session.isRunning,
         settingModel: false,
       };
+    case 'unavailable':
+      return unavailableState(state, action.reason);
     case 'operation_failed':
       return {
         ...state,
@@ -554,6 +597,9 @@ export function useChatSession(sessionId: string): ChatSession {
           sessionId,
           (event) => {
             dispatch({ type: 'pi_event', event, receivedAt: Date.now() });
+            if (event.type === 'session_archived' || event.type === 'session_deleted') {
+              unsubscribe?.();
+            }
             if (event.type === 'compaction_end' && event.result && !event.aborted) {
               void api.getMessages(sessionId).then((history) => {
                 if (!cancelled) {
@@ -572,6 +618,14 @@ export function useChatSession(sessionId: string): ChatSession {
         );
       } catch (error) {
         if (!cancelled) {
+          const status = getErrorStatus(error);
+          if (status === 404 || status === 410) {
+            dispatch({
+              type: 'unavailable',
+              reason: status === 410 ? 'archived' : 'missing',
+            });
+            return;
+          }
           dispatch({
             type: 'operation_failed',
             message: error instanceof Error ? error.message : String(error),
@@ -589,12 +643,7 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const send = useCallback(
     async (text: string): Promise<void> => {
-      if (
-        state.isRunning ||
-        state.sending ||
-        state.settingModel ||
-        state.settingThinkingLevel
-      ) {
+      if (state.isRunning || state.sending || state.settingModel || state.settingThinkingLevel) {
         return;
       }
       dispatch({ type: 'send_started' });
@@ -693,14 +742,22 @@ export function useChatSession(sessionId: string): ChatSession {
           retryable: false,
         });
       }
-    }, [
-      sessionId,
-      state.isRunning,
-      state.session,
-      state.settingModel,
-      state.settingThinkingLevel,
-    ]
+    },
+    [sessionId, state.isRunning, state.session, state.settingModel, state.settingThinkingLevel]
   );
 
   return { state, send, retry, abort, setThinkingLevel, setModel };
+}
+
+/**
+ * 从接口错误中读取 HTTP 状态码。
+ *
+ * @param error - 未知请求错误
+ * @returns HTTP 状态码；普通错误返回 null
+ */
+function getErrorStatus(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return null;
+  }
+  return typeof error.status === 'number' ? error.status : null;
 }

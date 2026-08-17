@@ -36,6 +36,21 @@ export class SessionNotFoundError extends Error {
   }
 }
 
+/** 请求的会话已经归档，不能通过普通会话接口访问 */
+export class SessionArchivedError extends Error {
+  readonly status = 410;
+
+  /**
+   * 创建会话已归档错误。
+   *
+   * @param sessionId - 请求的会话标识
+   */
+  constructor(sessionId: string) {
+    super(`会话已归档:${sessionId}`);
+    this.name = 'SessionArchivedError';
+  }
+}
+
 /** 请求的模型当前没有有效凭据或不存在 */
 export class ModelUnavailableError extends Error {
   readonly status = 400;
@@ -123,7 +138,7 @@ export interface HubSession {
 }
 
 /** Hub 从 Pi 会话目录读取的持久化摘要 */
-export interface StoredSessionSummary {
+interface StoredSessionSummary {
   id: string;
   createdAt: number;
   updatedAt: number;
@@ -181,4 +196,22 @@ export interface Hub {
    * @throws 会话不存在、模型不存在或初始化失败
    */
   openSession(config: ModelConfig, sessionId: string): Promise<HubSession>;
+
+  /**
+   * 保留 Pi 会话文件并将会话移出普通会话列表。
+   *
+   * @param sessionId - 会话标识
+   * @returns 会话文件移入归档目录后解决的 Promise
+   * @throws 会话已归档、会话不存在或文件移动失败
+   */
+  archiveSession(sessionId: string): Promise<void>;
+
+  /**
+   * 永久删除指定 Pi 会话文件。
+   *
+   * @param sessionId - 会话标识
+   * @returns 会话文件删除后解决的 Promise
+   * @throws 会话已归档、会话不存在或文件删除失败
+   */
+  deleteSession(sessionId: string): Promise<void>;
 }
