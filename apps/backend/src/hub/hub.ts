@@ -106,6 +106,14 @@ export interface HubSession {
   getState(): AgentSessionState;
 
   /**
+   * 设置 Pi 持久化会话名称。
+   *
+   * @param title - 非空会话标题
+   * @returns 无返回值
+   */
+  setSessionName(title: string): void;
+
+  /**
    * 中止当前 Agent 运行或上下文压缩并等待其稳定。
    *
    * @returns Agent 完全稳定后解决的 Promise
@@ -140,6 +148,8 @@ export interface HubSession {
 /** Hub 从 Pi 会话目录读取的持久化摘要 */
 interface StoredSessionSummary {
   id: string;
+  name?: string;
+  firstMessage: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;

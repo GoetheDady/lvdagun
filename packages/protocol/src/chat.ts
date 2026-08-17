@@ -57,6 +57,8 @@ export interface ActiveCompaction {
 
 /** Pi 当前会话的运行与思考等级状态 */
 export interface AgentSessionState {
+  /** Pi 持久化的会话名称；尚未命名时为 null */
+  sessionName: string | null;
   /** Agent 是否仍在运行、重试、压缩或处理排队任务 */
   isRunning: boolean;
   /** 客户端重连时用于恢复压缩状态；没有压缩时为 null */
@@ -77,7 +79,7 @@ export interface AgentSessionState {
 export interface SessionSummary {
   /** 不透明会话标识，不暴露本机会话文件路径 */
   id: string;
-  /** 当前展示标题；自动标题功能接入前固定为“新对话” */
+  /** 当前展示标题，依次取 Pi 会话名称、首条用户消息和“新对话” */
   title: string;
   /** 会话创建时间，Unix 毫秒时间戳 */
   createdAt: number;

@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { Archive, Ellipsis, Loader2, MessageSquare, Plus, Settings, Trash2 } from 'lucide-react';
+import {
+  Archive,
+  Ellipsis,
+  Loader2,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2,
+} from 'lucide-react';
 
 import type { SessionSummary } from '@lvdagun/protocol';
 
@@ -14,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +49,7 @@ export interface SessionSidebarProps {
   onSelect: (sessionId: string) => void;
   onArchive: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
+  onRename: (sessionId: string, title: string) => Promise<boolean>;
   onSettings: () => void;
 }
 
@@ -59,9 +70,12 @@ export function SessionSidebar({
   onSelect,
   onArchive,
   onDelete,
+  onRename,
   onSettings,
 }: SessionSidebarProps): React.JSX.Element {
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
+  const [pendingRename, setPendingRename] = useState<SessionSummary | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
 
   return (
     <>
@@ -93,7 +107,7 @@ export function SessionSidebar({
           {sessions.map((session) => {
             const active = session.id === activeSessionId;
             const mutating = mutatingSessionId === session.id;
-            const actionsDisabled = session.isRunning || mutating;
+            const destructiveActionsDisabled = session.isRunning || mutating;
             return (
               <div
                 key={session.id}
@@ -142,14 +156,24 @@ export function SessionSidebar({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" aria-label={`${session.title}会话操作`}>
                     <DropdownMenuItem
-                      disabled={actionsDisabled}
+                      disabled={mutating}
+                      onSelect={() => {
+                        setPendingRename(session);
+                        setRenameTitle(session.title);
+                      }}
+                    >
+                      <Pencil />
+                      重命名
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={destructiveActionsDisabled}
                       onSelect={() => onArchive(session.id)}
                     >
                       <Archive />
                       归档
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      disabled={actionsDisabled}
+                      disabled={destructiveActionsDisabled}
                       onSelect={() => setPendingDelete(session)}
                       variant="destructive"
                     >
@@ -198,6 +222,41 @@ export function SessionSidebar({
               }}
             >
               删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingRename !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingRename(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>重命名会话</AlertDialogTitle>
+            <AlertDialogDescription className="sr-only">修改当前会话标题</AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            autoFocus
+            aria-label="会话标题"
+            value={renameTitle}
+            onChange={(event) => setRenameTitle(event.target.value)}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!renameTitle.trim() || mutatingSessionId !== null}
+              onClick={() => {
+                if (!pendingRename) return;
+                const title = renameTitle.trim();
+                void onRename(pendingRename.id, title).then((renamed) => {
+                  if (renamed) setPendingRename(null);
+                });
+              }}
+            >
+              保存
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -45,6 +45,16 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
     res.json(await sessionManager.getState(req.params.sessionId!));
   });
 
+  app.put(SESSION_API_PATHS.title, async (req, res) => {
+    const { title } = req.body as { title?: unknown };
+    if (typeof title !== 'string' || title.trim() === '') {
+      res.status(400).json({ error: '标题不能为空' });
+      return;
+    }
+    await sessionManager.setSessionName(req.params.sessionId!, title.trim());
+    res.status(204).end();
+  });
+
   app.post(SESSION_API_PATHS.prompt, async (req, res) => {
     const { text } = req.body as { text?: unknown };
     if (typeof text !== 'string' || text.trim() === '') {

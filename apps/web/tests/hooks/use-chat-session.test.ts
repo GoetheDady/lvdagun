@@ -47,6 +47,7 @@ const captured = vi.hoisted(() => ({
 import { api } from '@/services/api-client';
 
 const sessionState: AgentSessionState = {
+  sessionName: null,
   isRunning: false,
   activeCompaction: null,
   thinkingLevel: 'medium',
@@ -177,6 +178,21 @@ describe('chatReducer', () => {
     });
 
     expect(state.session).toBe(current);
+  });
+
+  it('用 Pi 名称变化事件更新当前会话标题', () => {
+    const initialized = chatReducer(initialState, {
+      type: 'initialized',
+      messages: [],
+      session: sessionState,
+    });
+
+    const state = chatReducer(initialized, {
+      type: 'pi_event',
+      event: { type: 'session_info_changed', name: '自动生成的标题' },
+    });
+
+    expect(state.session?.sessionName).toBe('自动生成的标题');
   });
 
   it('message_start/update/end 完整归并文本增量', () => {

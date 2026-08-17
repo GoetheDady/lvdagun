@@ -81,6 +81,7 @@ export class FakeSession implements HubSession {
   isRunning = false;
   thinkingLevel: ThinkingLevel = 'medium';
   model: AvailableModel = availableModels[0]!;
+  sessionName: string | null = null;
   readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
   private timestamp = 1;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
@@ -130,6 +131,7 @@ export class FakeSession implements HubSession {
    * @returns 当前运行状态和思考等级
    */
   getState = (): AgentSessionState => ({
+    sessionName: this.sessionName,
     isRunning: this.isRunning,
     activeCompaction: null,
     thinkingLevel: this.thinkingLevel,
@@ -137,6 +139,12 @@ export class FakeSession implements HubSession {
     model: this.model,
     availableModels: [...availableModels],
     modelWarning: null,
+  });
+
+  /** @param title - 新标题 */
+  setSessionName = vi.fn((title: string): void => {
+    this.sessionName = title;
+    this.emit({ type: 'session_info_changed', name: title });
   });
 
   /**
@@ -271,6 +279,9 @@ export function makeFakeHub(): {
     listSessions: vi.fn(async () =>
       sessions.map((session) => ({
         id: session.id,
+        name: session.sessionName ?? undefined,
+        firstMessage:
+          session.messages.find((message) => message.role === 'user')?.content.toString() ?? '',
         createdAt: session.createdAt,
         updatedAt: session.messages.at(-1)?.timestamp ?? session.createdAt,
         messageCount: session.messages.length,

@@ -85,6 +85,13 @@ export const api = {
   deleteSession: (sessionId: string): Promise<void> =>
     request(sessionApiPaths(sessionId).state, { method: 'DELETE' }),
 
+  setSessionTitle: (sessionId: string, title: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).title, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+
   getMessages: (sessionId: string): Promise<ChatMessage[]> =>
     request(sessionApiPaths(sessionId).messages),
 

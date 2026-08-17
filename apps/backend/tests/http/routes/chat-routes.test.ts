@@ -71,6 +71,7 @@ describe('对话接口', () => {
     try {
       const stateResponse = await fetch(`${baseUrl}/api/sessions/session-1`);
       await expect(stateResponse.json()).resolves.toEqual({
+        sessionName: null,
         isRunning: false,
         activeCompaction: null,
         thinkingLevel: 'medium',
@@ -154,6 +155,31 @@ describe('对话接口', () => {
         body: JSON.stringify({ text: '   ' }),
       });
       expect(response.status).toBe(400);
+    } finally {
+      await close();
+    }
+  });
+
+  it('校验并持久化手动会话标题', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      const invalid = await fetch(`${baseUrl}/api/sessions/session-1/title`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: '   ' }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const renamed = await fetch(`${baseUrl}/api/sessions/session-1/title`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: '  手动标题  ' }),
+      });
+      expect(renamed.status).toBe(204);
+      expect(sessions[0]!.setSessionName).toHaveBeenCalledWith('手动标题');
     } finally {
       await close();
     }

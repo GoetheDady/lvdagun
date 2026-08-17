@@ -19,6 +19,7 @@ export const API_PATHS = {
 /** Express 注册按会话寻址接口时使用的路径模板 */
 export const SESSION_API_PATHS = {
   state: `${API_PATHS.sessions}/:sessionId`,
+  title: `${API_PATHS.sessions}/:sessionId/title`,
   messages: `${API_PATHS.sessions}/:sessionId/messages`,
   prompt: `${API_PATHS.sessions}/:sessionId/prompt`,
   abort: `${API_PATHS.sessions}/:sessionId/abort`,
@@ -36,6 +37,7 @@ export const SESSION_API_PATHS = {
  */
 export function sessionApiPaths(sessionId: string): {
   state: string;
+  title: string;
   messages: string;
   prompt: string;
   abort: string;
@@ -47,6 +49,7 @@ export function sessionApiPaths(sessionId: string): {
   const base = `${API_PATHS.sessions}/${encodeURIComponent(sessionId)}`;
   return {
     state: base,
+    title: `${base}/title`,
     messages: `${base}/messages`,
     prompt: `${base}/prompt`,
     abort: `${base}/abort`,

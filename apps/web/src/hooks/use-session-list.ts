@@ -17,6 +17,8 @@ export interface SessionList {
   archiveSession(sessionId: string): Promise<boolean>;
   /** @param sessionId - 会话标识 @returns 是否删除成功 */
   deleteSession(sessionId: string): Promise<boolean>;
+  /** @param sessionId - 会话标识 @param title - 新标题 @returns 是否重命名成功 */
+  renameSession(sessionId: string, title: string): Promise<boolean>;
   /** @returns 列表刷新完成后的 Promise */
   refresh(): Promise<void>;
 }
@@ -126,6 +128,32 @@ export function useSessionList(): SessionList {
     [mutateSession]
   );
 
+  /** @param sessionId - 会话标识 @param title - 新标题 @returns 是否重命名成功 */
+  const renameSession = useCallback(
+    async (sessionId: string, title: string): Promise<boolean> => {
+      if (mutationRef.current !== null) {
+        return false;
+      }
+      mutationRef.current = sessionId;
+      setMutatingSessionId(sessionId);
+      try {
+        await api.setSessionTitle(sessionId, title);
+        setSessions((current) =>
+          current.map((session) => (session.id === sessionId ? { ...session, title } : session))
+        );
+        setError(null);
+        return true;
+      } catch (renameError) {
+        setError(renameError instanceof Error ? renameError.message : String(renameError));
+        return false;
+      } finally {
+        mutationRef.current = null;
+        setMutatingSessionId(null);
+      }
+    },
+    []
+  );
+
   return {
     sessions,
     loading,
@@ -135,6 +163,7 @@ export function useSessionList(): SessionList {
     createSession,
     archiveSession,
     deleteSession,
+    renameSession,
     refresh,
   };
 }

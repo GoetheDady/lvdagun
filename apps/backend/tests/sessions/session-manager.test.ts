@@ -43,6 +43,7 @@ class FakeSession implements HubSession {
   });
   readonly dispose = vi.fn(async (): Promise<void> => {});
   state: AgentSessionState = {
+    sessionName: null,
     isRunning: false,
     activeCompaction: null,
     thinkingLevel: 'medium',
@@ -54,6 +55,12 @@ class FakeSession implements HubSession {
 
   /** @param id - 会话标识 */
   constructor(readonly id: string) {}
+
+  /** @param title - 新标题 */
+  setSessionName(title: string): void {
+    this.state = { ...this.state, sessionName: title };
+    this.emit({ type: 'session_info_changed', name: title });
+  }
 
   /** @param listener - 事件监听器 @returns 退订函数 */
   subscribe(listener: (event: AgentStreamEvent) => void): () => void {
@@ -99,8 +106,28 @@ class FakeSession implements HubSession {
 function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
   const sessions = new Map<string, FakeSession>();
   const stored = [
-    { id: 'saved-a', createdAt: 1, updatedAt: 3, messageCount: 2 },
-    { id: 'saved-b', createdAt: 2, updatedAt: 2, messageCount: 1 },
+    {
+      id: 'saved-a',
+      name: '持久化标题',
+      firstMessage: '第一条消息',
+      createdAt: 1,
+      updatedAt: 3,
+      messageCount: 2,
+    },
+    {
+      id: 'saved-b',
+      firstMessage: '(no messages)',
+      createdAt: 2,
+      updatedAt: 2,
+      messageCount: 1,
+    },
+    {
+      id: 'saved-c',
+      firstMessage: '没有名称时展示首条消息',
+      createdAt: 3,
+      updatedAt: 1,
+      messageCount: 1,
+    },
   ];
   let nextId = 1;
   const hub: Hub = {
@@ -113,6 +140,7 @@ function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
       sessions.set(session.id, session);
       stored.push({
         id: session.id,
+        firstMessage: '',
         createdAt: session.createdAt,
         updatedAt: session.createdAt,
         messageCount: 0,
@@ -158,7 +186,7 @@ describe('createSessionManager', () => {
     await expect(manager.listSessions()).resolves.toEqual([
       {
         id: 'saved-a',
-        title: '新对话',
+        title: '持久化标题',
         createdAt: 1,
         updatedAt: 3,
         messageCount: 2,
@@ -169,6 +197,14 @@ describe('createSessionManager', () => {
         title: '新对话',
         createdAt: 2,
         updatedAt: 2,
+        messageCount: 1,
+        isRunning: false,
+      },
+      {
+        id: 'saved-c',
+        title: '没有名称时展示首条消息',
+        createdAt: 3,
+        updatedAt: 1,
         messageCount: 1,
         isRunning: false,
       },
@@ -195,6 +231,23 @@ describe('createSessionManager', () => {
     expect(listener).toHaveBeenCalledWith({ type: 'agent_start' });
     expect((await manager.listSessions())[0]).toMatchObject({ id: sessionId, isRunning: false });
     unsubscribe();
+  });
+
+  it('重命名会话并转发 Pi 名称变化事件', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+    const listener = vi.fn<(event: AgentStreamEvent) => void>();
+    await manager.subscribe('saved-a', listener);
+
+    await manager.setSessionName('saved-a', '手动设置的标题');
+
+    expect(sessions.get('saved-a')!.getState().sessionName).toBe('手动设置的标题');
+    expect(listener).toHaveBeenLastCalledWith({
+      type: 'session_info_changed',
+      name: '手动设置的标题',
+    });
   });
 
   it('一个会话运行时拒绝另一会话启动，稳定后释放全局约束', async () => {

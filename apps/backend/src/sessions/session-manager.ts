@@ -13,6 +13,8 @@ import type {
 import type { ConfigStore } from '../config/config-store';
 import { AgentBusyError, type Hub, type HubSession } from '../hub/hub';
 
+const PI_EMPTY_SESSION_MESSAGE = '(no messages)';
+
 /** 未配置领域错误:HTTP 层映射为 409 */
 export class NotConfiguredError extends Error {
   /** 创建未配置错误。 */
@@ -48,6 +50,9 @@ export interface SessionManager {
 
   /** @param sessionId - 会话标识 @returns Agent 运行与思考等级状态 */
   getState(sessionId: string): Promise<AgentSessionState>;
+
+  /** @param sessionId - 会话标识 @param title - 新标题 @returns 无返回值 */
+  setSessionName(sessionId: string, title: string): Promise<void>;
 
   /**
    * 在全局没有其他 Agent 运行时接受提示。
@@ -258,9 +263,12 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
       for (const session of stored) {
         const record = loadedById.get(session.id);
+        const { name, firstMessage, ...metadata } = session;
+        const fallbackTitle =
+          firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : firstMessage.trim();
         summaries.set(session.id, {
-          ...session,
-          title: '新对话',
+          ...metadata,
+          title: name?.trim() || fallbackTitle || '新对话',
           isRunning: record?.session.getState().isRunning ?? false,
         });
       }
@@ -293,6 +301,10 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     async getState(sessionId: string): Promise<AgentSessionState> {
       return (await getRecord(sessionId)).session.getState();
+    },
+
+    async setSessionName(sessionId: string, title: string): Promise<void> {
+      (await getRecord(sessionId)).session.setSessionName(title);
     },
 
     async prompt(sessionId: string, text: string): Promise<void> {

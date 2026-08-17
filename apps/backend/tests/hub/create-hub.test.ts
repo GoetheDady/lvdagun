@@ -11,7 +11,13 @@ const pi = vi.hoisted(() => ({
       hasApiKeyAuth: boolean;
       models: Array<{ id: string; name: string }>;
     }>,
-    streamResult: null as null | { stopReason: string; errorMessage?: string } | Error,
+    streamResult: null as
+      | null
+      | ChatMessage
+      | Promise<ChatMessage>
+      | { stopReason: string; errorMessage?: string }
+      | Error,
+    streamContexts: [] as unknown[],
     createCount: 0,
     setRuntimeApiKeyCalls: [] as Array<{ provider: string; apiKey: string }>,
     loginCalls: [] as Array<{ provider: string; type: string; apiKey: string }>,
@@ -23,6 +29,7 @@ const pi = vi.hoisted(() => ({
     sessionEvents: [] as unknown[],
     messages: [] as unknown[],
     entries: [] as unknown[],
+    sessionName: undefined as string | undefined,
     isIdle: true,
     thinkingLevel: 'medium',
     storedThinkingLevel: 'medium',
@@ -38,6 +45,8 @@ const pi = vi.hoisted(() => ({
     archivedSessionInfos: [] as Array<{
       id: string;
       path: string;
+      name?: string;
+      firstMessage: string;
       created: Date;
       modified: Date;
       messageCount: number;
@@ -45,6 +54,8 @@ const pi = vi.hoisted(() => ({
     sessionInfos: [] as Array<{
       id: string;
       path: string;
+      name?: string;
+      firstMessage: string;
       created: Date;
       modified: Date;
       messageCount: number;
@@ -105,8 +116,9 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
           reasoning: true,
         }))
       ),
-    streamSimple: (_model: unknown, _context: unknown, options?: { apiKey?: string }) => {
+    streamSimple: (_model: unknown, context: unknown, options?: { apiKey?: string }) => {
       pi.state.streamApiKeys.push(options?.apiKey);
+      pi.state.streamContexts.push(context);
       return {
         result: async () => {
           if (pi.state.streamResult instanceof Error) {
@@ -130,6 +142,9 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
     let listener: ((event: unknown) => void) | null = null;
     return {
       sessionId: 'test-session',
+      get sessionName() {
+        return pi.state.sessionName;
+      },
       get isIdle() {
         return pi.state.isIdle;
       },
@@ -138,6 +153,10 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       },
       sessionManager: {
         getBranch: () => pi.state.entries,
+        appendCustomEntry: (customType: string, data: unknown) => {
+          pi.state.entries.push({ type: 'custom', customType, data });
+          return 'custom-entry';
+        },
       },
       get thinkingLevel() {
         return pi.state.thinkingLevel;
@@ -177,6 +196,10 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       setModel: async (model: { provider: string; id: string; name: string }) => {
         pi.state.setModelCalls.push({ provider: model.provider, id: model.id });
         pi.state.currentModel = model;
+      },
+      setSessionName: (name: string) => {
+        pi.state.sessionName = name;
+        listener?.({ type: 'session_info_changed', name });
       },
     };
   };
@@ -294,6 +317,7 @@ beforeEach(() => {
   pi.state.setRuntimeApiKeyCalls = [];
   pi.state.loginCalls = [];
   pi.state.streamApiKeys = [];
+  pi.state.streamContexts = [];
   pi.state.runtimeCreateOptions = null;
   pi.state.setModelCalls = [];
   pi.state.currentModel = null;
@@ -301,6 +325,7 @@ beforeEach(() => {
   pi.state.sessionEvents = [];
   pi.state.messages = [];
   pi.state.entries = [];
+  pi.state.sessionName = undefined;
   pi.state.isIdle = true;
   pi.state.thinkingLevel = 'medium';
   pi.state.storedThinkingLevel = 'medium';
@@ -470,6 +495,8 @@ describe('createHub 会话能力', () => {
       {
         id: 'older',
         path: '/tmp/lvdagun-test/sessions/older.jsonl',
+        name: '已有标题',
+        firstMessage: '旧会话首条消息',
         created: new Date(10),
         modified: new Date(20),
         messageCount: 2,
@@ -477,6 +504,7 @@ describe('createHub 会话能力', () => {
       {
         id: 'newer',
         path: '/tmp/lvdagun-test/sessions/newer.jsonl',
+        firstMessage: '新会话首条消息',
         created: new Date(30),
         modified: new Date(40),
         messageCount: 4,
@@ -485,8 +513,22 @@ describe('createHub 会话能力', () => {
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
 
     await expect(hub.listSessions()).resolves.toEqual([
-      { id: 'newer', createdAt: 30, updatedAt: 40, messageCount: 4 },
-      { id: 'older', createdAt: 10, updatedAt: 20, messageCount: 2 },
+      {
+        id: 'newer',
+        name: undefined,
+        firstMessage: '新会话首条消息',
+        createdAt: 30,
+        updatedAt: 40,
+        messageCount: 4,
+      },
+      {
+        id: 'older',
+        name: '已有标题',
+        firstMessage: '旧会话首条消息',
+        createdAt: 10,
+        updatedAt: 20,
+        messageCount: 2,
+      },
     ]);
     await hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'older');
     expect(pi.state.openSessionPaths).toEqual(['/tmp/lvdagun-test/sessions/older.jsonl']);
@@ -500,6 +542,7 @@ describe('createHub 会话能力', () => {
       {
         id: 'archived',
         path: '/tmp/lvdagun-test/sessions/archived.jsonl',
+        firstMessage: '待归档',
         created: new Date(10),
         modified: new Date(20),
         messageCount: 2,
@@ -507,6 +550,7 @@ describe('createHub 会话能力', () => {
       {
         id: 'deleted',
         path: '/tmp/lvdagun-test/sessions/deleted.jsonl',
+        firstMessage: '待删除',
         created: new Date(30),
         modified: new Date(40),
         messageCount: 1,
@@ -516,7 +560,14 @@ describe('createHub 会话能力', () => {
 
     await hub.archiveSession('archived');
     await expect(hub.listSessions()).resolves.toEqual([
-      { id: 'deleted', createdAt: 30, updatedAt: 40, messageCount: 1 },
+      {
+        id: 'deleted',
+        name: undefined,
+        firstMessage: '待删除',
+        createdAt: 30,
+        updatedAt: 40,
+        messageCount: 1,
+      },
     ]);
     await expect(
       hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'archived')
@@ -540,6 +591,7 @@ describe('createHub 会话能力', () => {
       {
         id: 'saved',
         path: '/tmp/lvdagun-test/sessions/saved.jsonl',
+        firstMessage: '',
         created: new Date(10),
         modified: new Date(20),
         messageCount: 0,
@@ -565,6 +617,7 @@ describe('createHub 会话能力', () => {
       {
         id: 'saved',
         path: '/tmp/lvdagun-test/sessions/saved.jsonl',
+        firstMessage: '',
         created: new Date(10),
         modified: new Date(20),
         messageCount: 0,
@@ -629,6 +682,90 @@ describe('createHub 会话能力', () => {
         assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '你' },
       },
     ]);
+  });
+
+  it('首次成功运行后使用当前模型生成一次 Pi 会话名称', async () => {
+    const userMessage: ChatMessage = { role: 'user', content: '帮我设计自动标题功能', timestamp: 1 };
+    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '采用 Pi 原生会话名称实现。' }],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-a',
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: 2,
+    };
+    pi.state.entries = [
+      { type: 'message', message: userMessage },
+      { type: 'message', message: answerMessage },
+    ];
+    pi.state.sessionEvents = [{ type: 'agent_settled' }];
+    pi.state.streamResult = { ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] };
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+
+    await session.prompt('继续');
+    await vi.waitFor(() => expect(session.getState().sessionName).toBe('自动生成的会话标题'));
+    await session.prompt('再次运行');
+
+    expect(pi.state.streamContexts).toHaveLength(1);
+    expect(pi.state.entries).toContainEqual(
+      expect.objectContaining({ type: 'custom', customType: 'lvdagun.auto-title-attempted' })
+    );
+  });
+
+  it('自动标题生成期间的手动名称不会被覆盖', async () => {
+    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '已经完成实现。' }],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-a',
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: 2,
+    };
+    pi.state.entries = [
+      { type: 'message', message: { role: 'user', content: '实现标题', timestamp: 1 } },
+      { type: 'message', message: answerMessage },
+    ];
+    pi.state.sessionEvents = [{ type: 'agent_settled' }];
+    let resolveTitle!: (message: ChatMessage) => void;
+    pi.state.streamResult = new Promise((resolve) => {
+      resolveTitle = resolve;
+    });
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+
+    await session.prompt('继续');
+    await vi.waitFor(() => expect(pi.state.streamContexts).toHaveLength(1));
+    session.setSessionName('用户手动设置的标题');
+    resolveTitle({ ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] });
+
+    await vi.waitFor(() => expect(session.getState().sessionName).toBe('用户手动设置的标题'));
   });
 
   it('跟踪自动压缩，并在中止时同时取消压缩和 Agent 运行', async () => {

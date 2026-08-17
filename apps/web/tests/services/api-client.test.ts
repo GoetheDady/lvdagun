@@ -75,4 +75,19 @@ describe('api 请求', () => {
       { method: 'DELETE' },
     ]);
   });
+
+  it('使用按会话寻址接口更新标题', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+
+    await api.setSessionTitle('session-a', '标题');
+
+    expect(vi.mocked(fetch).mock.calls[0]).toEqual([
+      '/api/sessions/session-a/title',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: '标题' }),
+      },
+    ]);
+  });
 });

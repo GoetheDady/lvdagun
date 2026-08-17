@@ -17,6 +17,12 @@ import type {
 import { AgentBusyError, ModelUnavailableError, type HubSession } from './hub';
 import { toJsonAgentEvent } from './pi-json-event';
 
+const AUTO_TITLE_ENTRY_TYPE = 'lvdagun.auto-title-attempted';
+const TITLE_INPUT_LIMIT = 2000;
+const TITLE_TIMEOUT_MS = 15_000;
+const TITLE_SYSTEM_PROMPT = `你负责为一段 AI 对话生成标题。只输出标题本身，不要引号、序号或解释。
+要求：以中文为主，8 到 20 个字符；可保留必要的英文技术标识符；概括用户意图与结果；不得复述凭据、令牌、绝对路径或个人敏感信息。`;
+
 /** 使用 Pi AgentSessionRuntime 的 Hub 会话实现 */
 export class PiHubSession implements HubSession {
   readonly id: string;
@@ -118,6 +124,7 @@ export class PiHubSession implements HubSession {
       throw new Error('Pi 会话没有可用模型');
     }
     return {
+      sessionName: session.sessionName ?? null,
       isRunning: !session.isIdle || this.activeCompaction !== null,
       activeCompaction: this.activeCompaction ? { ...this.activeCompaction } : null,
       thinkingLevel: session.thinkingLevel,
@@ -128,6 +135,16 @@ export class PiHubSession implements HubSession {
         .map((availableModel) => this.toAvailableModel(availableModel)),
       modelWarning: this.modelWarning,
     };
+  }
+
+  /**
+   * 设置 Pi 原生会话名称并由 Pi 广播名称变化事件。
+   *
+   * @param title - 非空会话标题
+   * @returns 无返回值
+   */
+  setSessionName(title: string): void {
+    this.runtime.session.setSessionName(title);
   }
 
   /**
@@ -246,5 +263,111 @@ export class PiHubSession implements HubSession {
 
     const jsonEvent = toJsonAgentEvent(event);
     this.emit(jsonEvent);
+
+    if (event.type === 'agent_settled') {
+      void this.generateTitleOnce();
+    }
   };
+
+  /**
+   * 在首次成功对话后尝试一次后台标题生成。
+   *
+   * 自定义条目先于网络请求落盘，确保失败或服务重启后都不会重复计费；生成结束时再次读取
+   * `sessionName`，避免覆盖请求期间由用户设置的手动标题。
+   *
+   * @returns 后台尝试完成后的 Promise
+   */
+  private async generateTitleOnce(): Promise<void> {
+    const session = this.runtime.session;
+    const entries = session.sessionManager.getBranch();
+    if (
+      session.sessionName ||
+      entries.some(
+        (entry) => entry.type === 'custom' && entry.customType === AUTO_TITLE_ENTRY_TYPE
+      )
+    ) {
+      return;
+    }
+
+    const messages = this.getMessages();
+    const userMessage = messages.find((message) => message.role === 'user');
+    const assistantMessage = messages.find(
+      (message): message is Extract<ChatMessage, { role: 'assistant' }> =>
+        message.role === 'assistant' && message.stopReason === 'stop'
+    );
+    if (!userMessage || !assistantMessage) {
+      return;
+    }
+
+    session.sessionManager.appendCustomEntry(AUTO_TITLE_ENTRY_TYPE, { attemptedAt: Date.now() });
+    const userText = this.getUserText(userMessage).slice(0, TITLE_INPUT_LIMIT);
+    const assistantText = assistantMessage.content
+      .filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('\n')
+      .slice(0, TITLE_INPUT_LIMIT);
+    if (!userText || !assistantText || !session.model) {
+      return;
+    }
+
+    try {
+      const stream = this.runtime.services.modelRuntime.streamSimple(
+        session.model,
+        {
+          systemPrompt: TITLE_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: 'user',
+              content: `用户请求：\n${userText}\n\n助手回答：\n${assistantText}`,
+              timestamp: Date.now(),
+            },
+          ],
+          tools: [],
+        },
+        { maxTokens: 64, signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) }
+      );
+      const result = await stream.result();
+      const title = this.parseGeneratedTitle(result);
+      if (title && !session.sessionName) {
+        session.setSessionName(title);
+      }
+    } catch (error) {
+      console.error('自动生成会话标题失败:', error);
+    }
+  }
+
+  /** @param message - 首条用户消息 @returns 纯文本内容 */
+  private getUserText(message: Extract<ChatMessage, { role: 'user' }>): string {
+    return typeof message.content === 'string'
+      ? message.content
+      : message.content
+          .filter((content) => content.type === 'text')
+          .map((content) => content.text)
+          .join('\n');
+  }
+
+  /**
+   * 校验模型输出，防止不合规标题或敏感数据进入持久化名称。
+   *
+   * @param message - 标题模型最终消息
+   * @returns 合规标题；输出不合规时返回 null
+   */
+  private parseGeneratedTitle(message: Extract<ChatMessage, { role: 'assistant' }>): string | null {
+    const title = message.content
+      .filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('')
+      .trim()
+      .replace(/^标题[：:]\s*/, '')
+      .replace(/^["'“‘]|["'”’]$/g, '')
+      .trim();
+    const length = [...title].length;
+    const containsSensitiveText =
+      /(?:\/Users\/|\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\|sk-[A-Za-z0-9_-]{8,}|(?:api[_ -]?key|token|密码|令牌)[：:=])/i.test(
+        title
+      );
+    return length >= 8 && length <= 20 && !title.includes('\n') && !containsSensitiveText
+      ? title
+      : null;
+  }
 }

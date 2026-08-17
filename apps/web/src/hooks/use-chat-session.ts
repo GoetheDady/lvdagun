@@ -413,6 +413,10 @@ function reducePiEvent(
         session: event.state,
         isRunning: event.state.isRunning,
       };
+    case 'session_info_changed':
+      return state.session
+        ? { ...state, session: { ...state.session, sessionName: event.name ?? null } }
+        : state;
     case 'session_archived':
       return unavailableState(state, 'archived');
     case 'session_deleted':
@@ -422,7 +426,6 @@ function reducePiEvent(
     case 'turn_end':
     case 'queue_update':
     case 'entry_appended':
-    case 'session_info_changed':
     case 'bash_execution_update':
       return state;
   }

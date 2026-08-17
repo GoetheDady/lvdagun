@@ -262,6 +262,8 @@ export function createHub(options: { dataDir: string }): Hub {
       return sessions
         .map((session) => ({
           id: session.id,
+          name: session.name,
+          firstMessage: session.firstMessage,
           createdAt: session.created.getTime(),
           updatedAt: session.modified.getTime(),
           messageCount: session.messageCount,

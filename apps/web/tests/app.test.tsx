@@ -14,6 +14,9 @@ vi.mock('@/services/api-client', () => ({
     listModels: vi.fn(),
     listSessions: vi.fn(),
     createSession: vi.fn(),
+    archiveSession: vi.fn(),
+    deleteSession: vi.fn(),
+    setSessionTitle: vi.fn(),
     getMessages: vi.fn(),
     getSessionState: vi.fn(),
     prompt: vi.fn(),
@@ -49,6 +52,7 @@ beforeEach(() => {
   vi.mocked(api.createSession).mockResolvedValue({ sessionId: 'session-a' });
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue({
+    sessionName: null,
     isRunning: false,
     activeCompaction: null,
     thinkingLevel: 'medium',

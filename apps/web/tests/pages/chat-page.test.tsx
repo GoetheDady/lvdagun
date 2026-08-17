@@ -18,6 +18,7 @@ vi.mock('@/services/api-client', () => ({
     createSession: vi.fn(),
     archiveSession: vi.fn(),
     deleteSession: vi.fn(),
+    setSessionTitle: vi.fn(),
     getMessages: vi.fn(),
     getSessionState: vi.fn(),
     prompt: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('@/services/event-stream', () => ({
 }));
 
 const sessionState: AgentSessionState = {
+  sessionName: null,
   isRunning: false,
   activeCompaction: null,
   thinkingLevel: 'medium',
@@ -104,6 +106,7 @@ beforeEach(() => {
   vi.mocked(api.createSession).mockResolvedValue({ sessionId: 'session-b' });
   vi.mocked(api.archiveSession).mockResolvedValue(undefined);
   vi.mocked(api.deleteSession).mockResolvedValue(undefined);
+  vi.mocked(api.setSessionTitle).mockResolvedValue(undefined);
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(sessionState);
   vi.mocked(api.prompt).mockResolvedValue(undefined);
@@ -252,6 +255,16 @@ describe('ChatPage', () => {
     expect(api.setThinkingLevel).not.toHaveBeenCalled();
   });
 
+  it('通过 Pi 名称事件即时更新页面标题', async () => {
+    renderChatPage();
+    await waitFor(() => expect(captured.onEvent).not.toBeNull());
+
+    act(() => captured.onEvent!({ type: 'session_info_changed', name: '自动生成的会话标题' }));
+
+    expect(screen.getByRole('heading', { name: '自动生成的会话标题' })).toBeInTheDocument();
+    expect(document.title).toBe('自动生成的会话标题 - 驴打滚');
+  });
+
   it('模型 SSE 更新会清除旧模型的思考等级预览', async () => {
     let resolveThinkingLevel!: (state: AgentSessionState) => void;
     vi.mocked(api.setThinkingLevel).mockImplementationOnce(
@@ -331,6 +344,21 @@ describe('ChatPage', () => {
     await waitFor(() => expect(api.createSession).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.getMessages).toHaveBeenCalledWith('session-b'));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('从会话菜单手动重命名并立即更新侧栏', async () => {
+    renderChatPage();
+    await userEvent.click(await screen.findByRole('button', { name: '更多操作：新对话' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '重命名' }));
+    const input = screen.getByRole('textbox', { name: '会话标题' });
+    await userEvent.clear(input);
+    await userEvent.type(input, '手动设置的标题');
+    await userEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() =>
+      expect(api.setSessionTitle).toHaveBeenCalledWith('session-a', '手动设置的标题')
+    );
+    expect(await screen.findByRole('button', { name: '打开会话：手动设置的标题' })).toBeVisible();
   });
 
   it('切换会话时保留侧边栏列表且不重新显示加载状态', async () => {

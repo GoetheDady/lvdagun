@@ -99,6 +99,7 @@ function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
             onSelect={(selectedId) => navigate(`/sessions/${encodeURIComponent(selectedId)}`)}
             onArchive={handleArchiveSession}
             onDelete={handleDeleteSession}
+            onRename={sessionList.renameSession}
             onSettings={() => navigate('/settings')}
           />
         </ResizablePanel>
@@ -141,6 +142,23 @@ function ChatWorkspace({
     state.activeAssistant !== null ||
     state.retries.length > 0 ||
     state.compaction !== null;
+  const firstUserMessage = state.messages.find((message) => message.role === 'user');
+  const firstUserText =
+    firstUserMessage?.role === 'user'
+      ? typeof firstUserMessage.content === 'string'
+        ? firstUserMessage.content
+        : firstUserMessage.content
+            .filter((content) => content.type === 'text')
+            .map((content) => content.text)
+            .join('\n')
+      : '';
+  const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
+  const sessionTitle =
+    state.session?.sessionName?.trim() || sidebarTitle || firstUserText.trim() || '新对话';
+
+  useEffect(() => {
+    document.title = `${sessionTitle} - 驴打滚`;
+  }, [sessionTitle]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: state.isRunning ? 'smooth' : 'auto' });
@@ -155,7 +173,12 @@ function ChatWorkspace({
 
   useEffect(() => {
     void refreshSessionList();
-  }, [refreshSessionList, state.isRunning, state.unavailableReason]);
+  }, [
+    refreshSessionList,
+    state.isRunning,
+    state.session?.sessionName,
+    state.unavailableReason,
+  ]);
 
   if (state.unavailableReason) {
     return <UnavailableWorkspace reason={state.unavailableReason} />;
@@ -194,7 +217,7 @@ function ChatWorkspace({
     <div className="flex h-full min-w-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-3 px-5">
         <div className="mr-auto min-w-0">
-          <h2 className="truncate text-sm font-semibold">新对话</h2>
+          <h2 className="truncate text-sm font-semibold">{sessionTitle}</h2>
           <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <span
               className={`size-1.5 rounded-full ${
