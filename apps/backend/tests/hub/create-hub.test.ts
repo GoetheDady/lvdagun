@@ -2,6 +2,38 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
 
+/**
+ * 构造测试使用的 Pi 助手消息。
+ *
+ * @param text - 助手文本
+ * @param stopReason - Pi 结束原因
+ * @param timestamp - 消息时间戳
+ * @returns 完整助手消息
+ */
+function assistantMessage(
+  text: string,
+  stopReason: Extract<ChatMessage, { role: 'assistant' }>['stopReason'] = 'stop',
+  timestamp = 2
+): Extract<ChatMessage, { role: 'assistant' }> {
+  return {
+    role: 'assistant',
+    content: text ? [{ type: 'text', text }] : [],
+    api: 'anthropic-messages',
+    provider: 'anthropic',
+    model: 'claude-a',
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason,
+    timestamp,
+  };
+}
+
 /** Pi SDK 的模块级测试状态。 */
 const pi = vi.hoisted(() => ({
   state: {
@@ -634,23 +666,7 @@ describe('createHub 会话能力', () => {
   });
 
   it('原样镜像 Pi JSON 事件，并去掉 message_update 累计快照', async () => {
-    const startMessage: ChatMessage = {
-      role: 'assistant',
-      content: [],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'claude-a',
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'pending',
-      timestamp: 1,
-    };
+    const startMessage = assistantMessage('', 'pending', 1);
     pi.state.sessionEvents = [
       { type: 'message_start', message: startMessage },
       {
@@ -686,23 +702,7 @@ describe('createHub 会话能力', () => {
 
   it('首次成功运行后使用当前模型生成一次 Pi 会话标题', async () => {
     const userMessage: ChatMessage = { role: 'user', content: '帮我设计自动标题功能', timestamp: 1 };
-    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
-      role: 'assistant',
-      content: [{ type: 'text', text: '采用 Pi 原生会话标题实现。' }],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'claude-a',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: 2,
-    };
+    const answerMessage = assistantMessage('采用 Pi 原生会话标题实现。');
     pi.state.entries = [
       { type: 'message', message: userMessage },
       { type: 'message', message: answerMessage },
@@ -731,23 +731,7 @@ describe('createHub 会话能力', () => {
   });
 
   it('自动标题生成期间的手动标题不会被覆盖', async () => {
-    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
-      role: 'assistant',
-      content: [{ type: 'text', text: '已经完成实现。' }],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'claude-a',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: 2,
-    };
+    const answerMessage = assistantMessage('已经完成实现。');
     pi.state.entries = [
       { type: 'message', message: { role: 'user', content: '实现标题', timestamp: 1 } },
       { type: 'message', message: answerMessage },
@@ -777,24 +761,8 @@ describe('createHub 会话能力', () => {
   });
 
   it('本次运行失败时不使用历史成功回答生成标题', async () => {
-    const historicalAnswer: Extract<ChatMessage, { role: 'assistant' }> = {
-      role: 'assistant',
-      content: [{ type: 'text', text: '历史成功回答' }],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'claude-a',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: 2,
-    };
-    const failedAnswer = { ...historicalAnswer, stopReason: 'error' as const, timestamp: 3 };
+    const historicalAnswer = assistantMessage('历史成功回答');
+    const failedAnswer = assistantMessage('本次运行失败', 'error', 3);
     pi.state.entries = [
       { type: 'message', message: { role: 'user', content: '历史请求', timestamp: 1 } },
       { type: 'message', message: historicalAnswer },
@@ -818,23 +786,7 @@ describe('createHub 会话能力', () => {
   });
 
   it('标题模型返回错误或不合规内容时不持久化且不重试', async () => {
-    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
-      role: 'assistant',
-      content: [{ type: 'text', text: '本次回答成功。' }],
-      api: 'anthropic-messages',
-      provider: 'anthropic',
-      model: 'claude-a',
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: 2,
-    };
+    const answerMessage = assistantMessage('本次回答成功。');
     pi.state.entries = [
       { type: 'message', message: { role: 'user', content: '生成标题', timestamp: 1 } },
       { type: 'message', message: answerMessage },

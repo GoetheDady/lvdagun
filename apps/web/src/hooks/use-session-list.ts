@@ -87,14 +87,20 @@ export function useSessionList(): SessionList {
   }, [creating, refresh]);
 
   /**
-   * 执行会话生命周期操作并立即从普通列表移除目标会话。
+   * 执行会话列表操作并投影成功后的列表状态。
    *
    * @param sessionId - 会话标识
-   * @param operation - 归档或删除接口调用
+   * @param operation - 会话接口调用
+   * @param updateSessions - 操作成功后的列表投影，默认移除目标会话
    * @returns 操作是否成功
    */
   const mutateSession = useCallback(
-    async (sessionId: string, operation: (id: string) => Promise<void>): Promise<boolean> => {
+    async (
+      sessionId: string,
+      operation: (id: string) => Promise<void>,
+      updateSessions: (sessions: SessionSummary[]) => SessionSummary[] = (current) =>
+        current.filter((session) => session.id !== sessionId)
+    ): Promise<boolean> => {
       if (mutationRef.current !== null) {
         return false;
       }
@@ -102,7 +108,7 @@ export function useSessionList(): SessionList {
       setMutatingSessionId(sessionId);
       try {
         await operation(sessionId);
-        setSessions((current) => current.filter((session) => session.id !== sessionId));
+        setSessions(updateSessions);
         setError(null);
         return true;
       } catch (mutationError) {
@@ -130,28 +136,14 @@ export function useSessionList(): SessionList {
 
   /** @param sessionId - 会话标识 @param title - 新标题 @returns 是否重命名成功 */
   const renameSession = useCallback(
-    async (sessionId: string, title: string): Promise<boolean> => {
-      if (mutationRef.current !== null) {
-        return false;
-      }
-      mutationRef.current = sessionId;
-      setMutatingSessionId(sessionId);
-      try {
-        await api.setSessionTitle(sessionId, title);
-        setSessions((current) =>
+    (sessionId: string, title: string): Promise<boolean> =>
+      mutateSession(
+        sessionId,
+        (id) => api.setSessionTitle(id, title),
+        (current) =>
           current.map((session) => (session.id === sessionId ? { ...session, title } : session))
-        );
-        setError(null);
-        return true;
-      } catch (renameError) {
-        setError(renameError instanceof Error ? renameError.message : String(renameError));
-        return false;
-      } finally {
-        mutationRef.current = null;
-        setMutatingSessionId(null);
-      }
-    },
-    []
+      ),
+    [mutateSession]
   );
 
   return {
