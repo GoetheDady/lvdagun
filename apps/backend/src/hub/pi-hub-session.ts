@@ -378,6 +378,7 @@ export class PiHubSession implements HubSession {
       .trim();
     const length = [...title].length;
     const chineseCharacterCount = title.match(/\p{Script=Han}/gu)?.length ?? 0;
+    const meaningfulCharacterCount = title.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
     const containsSensitiveText =
       /(?:\/Users\/|\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\|sk-[A-Za-z0-9_-]{8,}|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|1[3-9]\d{9}|\d{17}[\dXx]|(?:api[_ -]?key|token|密码|令牌)[：:=])/i.test(
         title
@@ -385,6 +386,7 @@ export class PiHubSession implements HubSession {
     return length >= 8 &&
       length <= 20 &&
       chineseCharacterCount >= 4 &&
+      chineseCharacterCount * 2 >= meaningfulCharacterCount &&
       !title.includes('\n') &&
       !containsSensitiveText
       ? title
