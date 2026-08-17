@@ -233,7 +233,7 @@ describe('createSessionManager', () => {
     unsubscribe();
   });
 
-  it('重命名会话并转发 Pi 名称变化事件', async () => {
+  it('重命名会话并转发 Pi 标题变化事件', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);

@@ -154,7 +154,7 @@ function ChatWorkspace({
       : '';
   const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
   const sessionTitle =
-    state.session?.sessionName?.trim() || sidebarTitle || firstUserText.trim() || '新对话';
+    state.session?.sessionName?.trim() || firstUserText.trim() || sidebarTitle || '新对话';
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;

@@ -132,7 +132,7 @@ describe('ChatPage', () => {
     ]);
     renderChatPage();
     expect(await screen.findByRole('navigation', { name: '会话列表' })).toBeInTheDocument();
-    expect(await screen.findByText('你好')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '你好' })).toBeInTheDocument();
     expect(await screen.findByText('你好呀')).toBeInTheDocument();
     expect(screen.getByText(/anthropic \/ claude-a/)).toBeInTheDocument();
   });
@@ -255,7 +255,7 @@ describe('ChatPage', () => {
     expect(api.setThinkingLevel).not.toHaveBeenCalled();
   });
 
-  it('通过 Pi 名称事件即时更新页面标题', async () => {
+  it('通过 Pi 标题事件即时更新页面标题', async () => {
     renderChatPage();
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
 
@@ -492,7 +492,7 @@ describe('ChatPage', () => {
         assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '嗨' },
       });
     });
-    expect(screen.getByText('你好')).toBeInTheDocument();
+    expect(within(screen.getAllByRole('article')[0]!).getByText('你好')).toBeInTheDocument();
     expect(screen.getByText('嗨')).toBeInTheDocument();
   });
 });

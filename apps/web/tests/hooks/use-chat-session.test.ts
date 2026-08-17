@@ -180,7 +180,7 @@ describe('chatReducer', () => {
     expect(state.session).toBe(current);
   });
 
-  it('用 Pi 名称变化事件更新当前会话标题', () => {
+  it('用 Pi 标题变化事件更新当前会话标题', () => {
     const initialized = chatReducer(initialState, {
       type: 'initialized',
       messages: [],

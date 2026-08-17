@@ -29,6 +29,7 @@ export class PiHubSession implements HubSession {
   readonly createdAt: number;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private activeCompaction: ActiveCompaction | null = null;
+  private latestRunSucceeded = false;
   private modelWarning: string | null;
   private unsubscribeSession: (() => void) | null = null;
 
@@ -138,7 +139,7 @@ export class PiHubSession implements HubSession {
   }
 
   /**
-   * 设置 Pi 原生会话名称并由 Pi 广播名称变化事件。
+   * 设置 Pi 原生会话标题并由 Pi 广播标题变化事件。
    *
    * @param title - 非空会话标题
    * @returns 无返回值
@@ -255,6 +256,16 @@ export class PiHubSession implements HubSession {
    * @returns 无返回值
    */
   private readonly handleEvent = (event: AgentSessionEvent): void => {
+    if (event.type === 'agent_start') {
+      this.latestRunSucceeded = false;
+    } else if (event.type === 'agent_end') {
+      this.latestRunSucceeded =
+        !event.willRetry &&
+        event.messages.some(
+          (message) => message.role === 'assistant' && message.stopReason === 'stop'
+        );
+    }
+
     if (event.type === 'compaction_start') {
       this.activeCompaction = { reason: event.reason };
     } else if (event.type === 'compaction_end' || event.type === 'agent_settled') {
@@ -264,7 +275,8 @@ export class PiHubSession implements HubSession {
     const jsonEvent = toJsonAgentEvent(event);
     this.emit(jsonEvent);
 
-    if (event.type === 'agent_settled') {
+    if (event.type === 'agent_settled' && this.latestRunSucceeded) {
+      this.latestRunSucceeded = false;
       void this.generateTitleOnce();
     }
   };
@@ -327,6 +339,9 @@ export class PiHubSession implements HubSession {
         { maxTokens: 64, signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) }
       );
       const result = await stream.result();
+      if (result.stopReason !== 'stop') {
+        return;
+      }
       const title = this.parseGeneratedTitle(result);
       if (title && !session.sessionName) {
         session.setSessionName(title);
@@ -362,11 +377,16 @@ export class PiHubSession implements HubSession {
       .replace(/^["'“‘]|["'”’]$/g, '')
       .trim();
     const length = [...title].length;
+    const chineseCharacterCount = title.match(/\p{Script=Han}/gu)?.length ?? 0;
     const containsSensitiveText =
-      /(?:\/Users\/|\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\|sk-[A-Za-z0-9_-]{8,}|(?:api[_ -]?key|token|密码|令牌)[：:=])/i.test(
+      /(?:\/Users\/|\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\|sk-[A-Za-z0-9_-]{8,}|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|1[3-9]\d{9}|\d{17}[\dXx]|(?:api[_ -]?key|token|密码|令牌)[：:=])/i.test(
         title
       );
-    return length >= 8 && length <= 20 && !title.includes('\n') && !containsSensitiveText
+    return length >= 8 &&
+      length <= 20 &&
+      chineseCharacterCount >= 4 &&
+      !title.includes('\n') &&
+      !containsSensitiveText
       ? title
       : null;
   }

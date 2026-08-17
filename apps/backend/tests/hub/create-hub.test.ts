@@ -684,11 +684,11 @@ describe('createHub 会话能力', () => {
     ]);
   });
 
-  it('首次成功运行后使用当前模型生成一次 Pi 会话名称', async () => {
+  it('首次成功运行后使用当前模型生成一次 Pi 会话标题', async () => {
     const userMessage: ChatMessage = { role: 'user', content: '帮我设计自动标题功能', timestamp: 1 };
     const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
       role: 'assistant',
-      content: [{ type: 'text', text: '采用 Pi 原生会话名称实现。' }],
+      content: [{ type: 'text', text: '采用 Pi 原生会话标题实现。' }],
       api: 'anthropic-messages',
       provider: 'anthropic',
       model: 'claude-a',
@@ -707,7 +707,11 @@ describe('createHub 会话能力', () => {
       { type: 'message', message: userMessage },
       { type: 'message', message: answerMessage },
     ];
-    pi.state.sessionEvents = [{ type: 'agent_settled' }];
+    pi.state.sessionEvents = [
+      { type: 'agent_start' },
+      { type: 'agent_end', messages: [answerMessage], willRetry: false },
+      { type: 'agent_settled' },
+    ];
     pi.state.streamResult = { ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] };
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
@@ -726,7 +730,7 @@ describe('createHub 会话能力', () => {
     );
   });
 
-  it('自动标题生成期间的手动名称不会被覆盖', async () => {
+  it('自动标题生成期间的手动标题不会被覆盖', async () => {
     const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
       role: 'assistant',
       content: [{ type: 'text', text: '已经完成实现。' }],
@@ -748,7 +752,11 @@ describe('createHub 会话能力', () => {
       { type: 'message', message: { role: 'user', content: '实现标题', timestamp: 1 } },
       { type: 'message', message: answerMessage },
     ];
-    pi.state.sessionEvents = [{ type: 'agent_settled' }];
+    pi.state.sessionEvents = [
+      { type: 'agent_start' },
+      { type: 'agent_end', messages: [answerMessage], willRetry: false },
+      { type: 'agent_settled' },
+    ];
     let resolveTitle!: (message: ChatMessage) => void;
     pi.state.streamResult = new Promise((resolve) => {
       resolveTitle = resolve;
@@ -766,6 +774,94 @@ describe('createHub 会话能力', () => {
     resolveTitle({ ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] });
 
     await vi.waitFor(() => expect(session.getState().sessionName).toBe('用户手动设置的标题'));
+  });
+
+  it('本次运行失败时不使用历史成功回答生成标题', async () => {
+    const historicalAnswer: Extract<ChatMessage, { role: 'assistant' }> = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '历史成功回答' }],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-a',
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: 2,
+    };
+    const failedAnswer = { ...historicalAnswer, stopReason: 'error' as const, timestamp: 3 };
+    pi.state.entries = [
+      { type: 'message', message: { role: 'user', content: '历史请求', timestamp: 1 } },
+      { type: 'message', message: historicalAnswer },
+    ];
+    pi.state.sessionEvents = [
+      { type: 'agent_start' },
+      { type: 'agent_end', messages: [failedAnswer], willRetry: false },
+      { type: 'agent_settled' },
+    ];
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+
+    await session.prompt('失败的本次请求');
+
+    expect(pi.state.streamContexts).toHaveLength(0);
+    expect(session.getState().sessionName).toBeNull();
+  });
+
+  it('标题模型返回错误或不合规内容时不持久化且不重试', async () => {
+    const answerMessage: Extract<ChatMessage, { role: 'assistant' }> = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '本次回答成功。' }],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-a',
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: 2,
+    };
+    pi.state.entries = [
+      { type: 'message', message: { role: 'user', content: '生成标题', timestamp: 1 } },
+      { type: 'message', message: answerMessage },
+    ];
+    pi.state.sessionEvents = [
+      { type: 'agent_start' },
+      { type: 'agent_end', messages: [answerMessage], willRetry: false },
+      { type: 'agent_settled' },
+    ];
+    pi.state.streamResult = {
+      ...answerMessage,
+      content: [{ type: 'text', text: 'API error response' }],
+      stopReason: 'error',
+    };
+    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession({
+      provider: 'anthropic',
+      apiKey: '',
+      modelId: 'claude-a',
+    });
+
+    await session.prompt('第一次运行');
+    await vi.waitFor(() => expect(pi.state.streamContexts).toHaveLength(1));
+    await session.prompt('第二次运行');
+
+    expect(pi.state.streamContexts).toHaveLength(1);
+    expect(session.getState().sessionName).toBeNull();
   });
 
   it('跟踪自动压缩，并在中止时同时取消压缩和 Agent 运行', async () => {

@@ -106,7 +106,7 @@ export interface HubSession {
   getState(): AgentSessionState;
 
   /**
-   * 设置 Pi 持久化会话名称。
+   * 设置 Pi 持久化会话标题。
    *
    * @param title - 非空会话标题
    * @returns 无返回值
