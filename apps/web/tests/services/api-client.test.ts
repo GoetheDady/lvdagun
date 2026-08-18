@@ -90,4 +90,24 @@ describe('api 请求', () => {
       },
     ]);
   });
+
+  it('使用按会话和稳定消息 ID 寻址的待处理消息接口', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(mockFetchResponse(200, { texts: ['第一条'] }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await api.steerPendingMessage('session-a', 'pending/a');
+    await api.removePendingMessage('session-a', 'pending/a');
+    await expect(api.takePendingMessages('session-a')).resolves.toEqual({ texts: ['第一条'] });
+    await api.discardPendingMessages('session-a');
+
+    expect(vi.mocked(fetch).mock.calls).toEqual([
+      ['/api/sessions/session-a/pending-messages/pending%2Fa/steer', { method: 'POST' }],
+      ['/api/sessions/session-a/pending-messages/pending%2Fa', { method: 'DELETE' }],
+      ['/api/sessions/session-a/pending-messages/take', { method: 'POST' }],
+      ['/api/sessions/session-a/pending-messages', { method: 'DELETE' }],
+    ]);
+  });
 });

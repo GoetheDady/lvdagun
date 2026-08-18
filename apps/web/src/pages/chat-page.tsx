@@ -6,6 +6,7 @@ import { useDefaultLayout } from 'react-resizable-panels';
 import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
+import { PendingMessages } from '@/components/chat/pending-messages';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -17,6 +18,17 @@ const SUGGESTIONS = ['总结今天的重要新闻', '帮我检查一个本地项
 
 /** 会话侧栏布局在浏览器中的稳定标识。 */
 const CHAT_LAYOUT_ID = 'chat-workspace-layout';
+
+/**
+ * 把取回文本放在现有草稿之前，并用空行分隔每条消息。
+ *
+ * @param texts - 按原排队顺序取回的文本
+ * @param draft - 当前客户端草稿
+ * @returns 合并后的草稿
+ */
+function prependDraft(texts: string[], draft: string): string {
+  return [...texts, draft].filter((text) => text.trim() !== '').join('\n\n');
+}
 
 /**
  * 从 URL 解析当前会话，并在会话变化时重建客户端状态。
@@ -130,7 +142,18 @@ function ChatWorkspace({
   sessionId: string;
   sessionList: SessionList;
 }): React.JSX.Element {
-  const { state, send, retry, abort, setThinkingLevel, setModel } = useChatSession(sessionId);
+  const {
+    state,
+    send,
+    retry,
+    abort,
+    steerPendingMessage,
+    removePendingMessage,
+    takePendingMessages,
+    discardPendingMessages,
+    setThinkingLevel,
+    setModel,
+  } = useChatSession(sessionId);
   const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -173,12 +196,7 @@ function ChatWorkspace({
 
   useEffect(() => {
     void refreshSessionList();
-  }, [
-    refreshSessionList,
-    state.isRunning,
-    state.session?.sessionName,
-    state.unavailableReason,
-  ]);
+  }, [refreshSessionList, state.isRunning, state.session?.sessionName, state.unavailableReason]);
 
   if (state.unavailableReason) {
     return <UnavailableWorkspace reason={state.unavailableReason} />;
@@ -194,9 +212,9 @@ function ChatWorkspace({
     if (
       !text ||
       state.sending ||
+      state.compaction?.status === 'running' ||
       state.settingModel ||
       state.settingThinkingLevel ||
-      state.isRunning ||
       anotherRunningSession
     ) {
       return;
@@ -209,9 +227,7 @@ function ChatWorkspace({
     ? '另一个会话正在运行'
     : state.compaction?.status === 'running'
       ? '正在压缩上下文'
-      : state.isRunning
-        ? 'Agent 正在运行'
-        : '输入消息';
+      : '输入消息';
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
@@ -292,6 +308,19 @@ function ChatWorkspace({
             aria-label="消息输入区"
             className="rounded-md border border-input bg-background transition-shadow focus-within:ring-2 focus-within:ring-ring"
           >
+            <PendingMessages
+              messages={state.session?.pendingMessages ?? []}
+              disabled={state.aborting}
+              steerDisabled={!state.isRunning || state.compaction?.status === 'running'}
+              onSteer={(messageId) => void steerPendingMessage(messageId)}
+              onRemove={(messageId) => void removePendingMessage(messageId)}
+              onTakeAll={() => {
+                void takePendingMessages().then((texts) => {
+                  setInput((draft) => prependDraft(texts, draft));
+                });
+              }}
+              onDiscardAll={() => void discardPendingMessages()}
+            />
             <textarea
               className="block max-h-40 min-h-20 w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none"
               placeholder={inputPlaceholder}
@@ -334,7 +363,11 @@ function ChatWorkspace({
                   disabled={state.aborting}
                   title={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
                   aria-label={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
-                  onClick={() => void abort()}
+                  onClick={() => {
+                    void abort().then((texts) => {
+                      setInput((draft) => prependDraft(texts, draft));
+                    });
+                  }}
                 >
                   {state.aborting ? (
                     <Loader2 className="animate-spin" />

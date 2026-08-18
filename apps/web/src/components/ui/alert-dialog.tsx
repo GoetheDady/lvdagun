@@ -16,6 +16,18 @@ export function AlertDialog(
 }
 
 /**
+ * 把任意按钮绑定为确认对话框触发器。
+ *
+ * @param props - Radix Trigger 属性
+ * @returns 确认对话框触发器
+ */
+export function AlertDialogTrigger(
+  props: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>
+): React.JSX.Element {
+  return <AlertDialogPrimitive.Trigger {...props} />;
+}
+
+/**
  * 将确认对话框渲染到页面顶层。
  *
  * @param props - Radix Portal 属性
@@ -114,10 +126,7 @@ export function AlertDialogTitle({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Title>): React.JSX.Element {
   return (
-    <AlertDialogPrimitive.Title
-      className={cn('text-base font-semibold', className)}
-      {...props}
-    />
+    <AlertDialogPrimitive.Title className={cn('text-base font-semibold', className)} {...props} />
   );
 }
 
@@ -167,10 +176,5 @@ export function AlertDialogAction({
   className,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Action>): React.JSX.Element {
-  return (
-    <AlertDialogPrimitive.Action
-      className={cn(buttonVariants(), className)}
-      {...props}
-    />
-  );
+  return <AlertDialogPrimitive.Action className={cn(buttonVariants(), className)} {...props} />;
 }

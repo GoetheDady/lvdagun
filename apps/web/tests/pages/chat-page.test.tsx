@@ -23,6 +23,10 @@ vi.mock('@/services/api-client', () => ({
     getSessionState: vi.fn(),
     prompt: vi.fn(),
     abortSession: vi.fn(),
+    steerPendingMessage: vi.fn(),
+    removePendingMessage: vi.fn(),
+    takePendingMessages: vi.fn(),
+    discardPendingMessages: vi.fn(),
     setThinkingLevel: vi.fn(),
     setSessionModel: vi.fn(),
   },
@@ -41,6 +45,7 @@ const sessionState: AgentSessionState = {
   sessionName: null,
   isRunning: false,
   activeCompaction: null,
+  pendingMessages: [],
   thinkingLevel: 'medium',
   availableThinkingLevels: ['off', 'low', 'medium', 'high'],
   model: {
@@ -110,7 +115,11 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(sessionState);
   vi.mocked(api.prompt).mockResolvedValue(undefined);
-  vi.mocked(api.abortSession).mockResolvedValue(undefined);
+  vi.mocked(api.abortSession).mockResolvedValue({ restoredTexts: [] });
+  vi.mocked(api.steerPendingMessage).mockResolvedValue(undefined);
+  vi.mocked(api.removePendingMessage).mockResolvedValue(undefined);
+  vi.mocked(api.takePendingMessages).mockResolvedValue({ texts: [] });
+  vi.mocked(api.discardPendingMessages).mockResolvedValue(undefined);
   vi.mocked(api.setThinkingLevel).mockResolvedValue({ ...sessionState, thinkingLevel: 'high' });
   vi.mocked(api.setSessionModel).mockResolvedValue({
     ...sessionState,
@@ -318,6 +327,63 @@ describe('ChatPage', () => {
     act(() => captured.onEvent!({ type: 'agent_start' }));
     await userEvent.click(screen.getByRole('button', { name: '停止' }));
     expect(api.abortSession).toHaveBeenCalledWith('session-a');
+  });
+
+  it('运行期间展示待处理消息并支持调整方向、删除和全部取回', async () => {
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      ...sessionState,
+      isRunning: true,
+      pendingMessages: [
+        { id: 'pending-a', text: '先检查接口' },
+        { id: 'pending-b', text: '再补测试' },
+      ],
+    });
+    vi.mocked(api.takePendingMessages).mockResolvedValue({ texts: ['先检查接口', '再补测试'] });
+    renderChatPage();
+
+    const pending = await screen.findByLabelText('待处理消息');
+    expect(within(pending).getByText('先检查接口')).toBeInTheDocument();
+    await userEvent.click(within(pending).getAllByRole('button', { name: '调整方向' })[0]!);
+    expect(api.steerPendingMessage).toHaveBeenCalledWith('session-a', 'pending-a');
+
+    await userEvent.click(
+      within(pending).getByRole('button', { name: '删除待处理消息：再补测试' })
+    );
+    expect(api.removePendingMessage).toHaveBeenCalledWith('session-a', 'pending-b');
+
+    await userEvent.click(within(pending).getByRole('button', { name: '全部取回' }));
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText('输入消息')).toHaveValue('先检查接口\n\n再补测试')
+    );
+  });
+
+  it('停止后把服务端返回的未处理文本恢复到当前草稿', async () => {
+    vi.mocked(api.getSessionState).mockResolvedValue({ ...sessionState, isRunning: true });
+    vi.mocked(api.abortSession).mockResolvedValue({ restoredTexts: ['排队一', '排队二'] });
+    renderChatPage();
+    const input = await screen.findByPlaceholderText('输入消息');
+    await userEvent.type(input, '现有草稿');
+
+    await userEvent.click(screen.getByRole('button', { name: '停止' }));
+
+    await waitFor(() => expect(input).toHaveValue('排队一\n\n排队二\n\n现有草稿'));
+  });
+
+  it('清空全部待处理消息前要求确认', async () => {
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      ...sessionState,
+      isRunning: true,
+      pendingMessages: [{ id: 'pending-a', text: '不要误删' }],
+    });
+    renderChatPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: '清空' }));
+    const dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText('清空待处理消息？')).toBeInTheDocument();
+    expect(api.discardPendingMessages).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: '清空' }));
+    expect(api.discardPendingMessages).toHaveBeenCalledWith('session-a');
   });
 
   it('刷新时恢复自动压缩状态并允许停止压缩', async () => {

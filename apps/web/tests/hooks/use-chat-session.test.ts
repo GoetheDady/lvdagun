@@ -17,6 +17,10 @@ vi.mock('@/services/api-client', () => ({
     getSessionState: vi.fn(),
     prompt: vi.fn(),
     abortSession: vi.fn(),
+    steerPendingMessage: vi.fn(),
+    removePendingMessage: vi.fn(),
+    takePendingMessages: vi.fn(),
+    discardPendingMessages: vi.fn(),
     setThinkingLevel: vi.fn(),
     setSessionModel: vi.fn(),
   },
@@ -50,6 +54,7 @@ const sessionState: AgentSessionState = {
   sessionName: null,
   isRunning: false,
   activeCompaction: null,
+  pendingMessages: [],
   thinkingLevel: 'medium',
   availableThinkingLevels: ['off', 'low', 'medium', 'high'],
   model: {
@@ -114,7 +119,11 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(stateCopy());
   vi.mocked(api.prompt).mockResolvedValue(undefined);
-  vi.mocked(api.abortSession).mockResolvedValue(undefined);
+  vi.mocked(api.abortSession).mockResolvedValue({ restoredTexts: [] });
+  vi.mocked(api.steerPendingMessage).mockResolvedValue(undefined);
+  vi.mocked(api.removePendingMessage).mockResolvedValue(undefined);
+  vi.mocked(api.takePendingMessages).mockResolvedValue({ texts: [] });
+  vi.mocked(api.discardPendingMessages).mockResolvedValue(undefined);
   vi.mocked(api.setThinkingLevel).mockResolvedValue(stateCopy({ thinkingLevel: 'high' }));
   vi.mocked(api.setSessionModel).mockResolvedValue(
     stateCopy({ model: sessionState.availableModels[1]! })
@@ -193,6 +202,24 @@ describe('chatReducer', () => {
     });
 
     expect(state.session?.sessionName).toBe('自动生成的标题');
+  });
+
+  it('用驴打滚事件同步权威待处理消息', () => {
+    const initialized = chatReducer(initialState, {
+      type: 'initialized',
+      messages: [],
+      session: sessionState,
+    });
+
+    const state = chatReducer(initialized, {
+      type: 'pi_event',
+      event: {
+        type: 'pending_messages_changed',
+        pendingMessages: [{ id: 'pending-a', text: '继续检查测试' }],
+      },
+    });
+
+    expect(state.session?.pendingMessages).toEqual([{ id: 'pending-a', text: '继续检查测试' }]);
   });
 
   it('message_start/update/end 完整归并文本增量', () => {
@@ -365,12 +392,12 @@ describe('useChatSession', () => {
     expect(result.current.state.error).toEqual({ message: '请求失败', retryable: true });
   });
 
-  it('运行中拒绝并发发送，stop 调用 Pi abort', async () => {
+  it('运行中发送默认排队，模型设置仍锁定且 stop 调用 Pi abort', async () => {
     const { result } = renderHook(() => useChatSession('session-a'));
     await waitFor(() => expect(captured.onEvent).not.toBeNull());
     act(() => captured.onEvent!({ type: 'agent_start' }));
     await act(async () => result.current.send('插队消息'));
-    expect(api.prompt).not.toHaveBeenCalled();
+    expect(api.prompt).toHaveBeenCalledWith('session-a', '插队消息');
     await act(async () => result.current.setThinkingLevel('high'));
     await act(async () => result.current.setModel({ provider: 'openai', id: 'gpt-a' }));
     expect(api.setThinkingLevel).not.toHaveBeenCalled();

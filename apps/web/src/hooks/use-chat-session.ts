@@ -112,6 +112,21 @@ export type ChatSessionAction =
   | { type: 'operation_failed'; message: string; retryable: boolean };
 
 /**
+ * 把未知错误转换为统一的操作失败动作。
+ *
+ * @param error - 捕获到的未知错误
+ * @param retryable - 是否允许重发最后一条消息
+ * @returns 对话状态机可处理的失败动作
+ */
+function operationFailedAction(error: unknown, retryable = false): ChatSessionAction {
+  return {
+    type: 'operation_failed',
+    message: error instanceof Error ? error.message : String(error),
+    retryable,
+  };
+}
+
+/**
  * 将 Pi 消息内容提取为可重发的纯文本。
  *
  * @param message - Pi 结构化消息
@@ -417,6 +432,10 @@ function reducePiEvent(
       return state.session
         ? { ...state, session: { ...state.session, sessionName: event.name ?? null } }
         : state;
+    case 'pending_messages_changed':
+      return state.session
+        ? { ...state, session: { ...state.session, pendingMessages: event.pendingMessages } }
+        : state;
     case 'session_archived':
       return unavailableState(state, 'archived');
     case 'session_deleted':
@@ -557,7 +576,15 @@ export interface ChatSession {
    *
    * @returns Pi 完全稳定后解决的 Promise
    */
-  abort(): Promise<void>;
+  abort(): Promise<string[]>;
+  /** @param messageId - 待处理消息标识 @returns Pi 接受调整方向后解决的 Promise */
+  steerPendingMessage(messageId: string): Promise<void>;
+  /** @param messageId - 待处理消息标识 @returns 删除完成后的 Promise */
+  removePendingMessage(messageId: string): Promise<void>;
+  /** @returns 按排队顺序取回的全部文本 */
+  takePendingMessages(): Promise<string[]>;
+  /** @returns 丢弃全部待处理消息后的 Promise */
+  discardPendingMessages(): Promise<void>;
   /**
    * 设置 Pi 当前思考等级。
    *
@@ -612,11 +639,7 @@ export function useChatSession(sessionId: string): ChatSession {
             }
           },
           (error) => {
-            dispatch({
-              type: 'operation_failed',
-              message: error.message,
-              retryable: false,
-            });
+            dispatch(operationFailedAction(error));
           }
         );
       } catch (error) {
@@ -629,11 +652,7 @@ export function useChatSession(sessionId: string): ChatSession {
             });
             return;
           }
-          dispatch({
-            type: 'operation_failed',
-            message: error instanceof Error ? error.message : String(error),
-            retryable: false,
-          });
+          dispatch(operationFailedAction(error));
         }
       }
     })();
@@ -646,7 +665,12 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const send = useCallback(
     async (text: string): Promise<void> => {
-      if (state.isRunning || state.sending || state.settingModel || state.settingThinkingLevel) {
+      if (
+        state.sending ||
+        state.compaction?.status === 'running' ||
+        state.settingModel ||
+        state.settingThinkingLevel
+      ) {
         return;
       }
       dispatch({ type: 'send_started' });
@@ -654,14 +678,16 @@ export function useChatSession(sessionId: string): ChatSession {
         await api.prompt(sessionId, text);
         dispatch({ type: 'send_finished' });
       } catch (error) {
-        dispatch({
-          type: 'operation_failed',
-          message: error instanceof Error ? error.message : String(error),
-          retryable: true,
-        });
+        dispatch(operationFailedAction(error, true));
       }
     },
-    [sessionId, state.isRunning, state.sending, state.settingModel, state.settingThinkingLevel]
+    [
+      sessionId,
+      state.compaction?.status,
+      state.sending,
+      state.settingModel,
+      state.settingThinkingLevel,
+    ]
   );
 
   const retry = useCallback((): void => {
@@ -676,22 +702,59 @@ export function useChatSession(sessionId: string): ChatSession {
     }
   }, [send, state.messages]);
 
-  const abort = useCallback(async (): Promise<void> => {
+  const abort = useCallback(async (): Promise<string[]> => {
     if (!state.isRunning || state.aborting) {
-      return;
+      return [];
     }
     dispatch({ type: 'abort_started' });
     try {
-      await api.abortSession(sessionId);
+      const result = await api.abortSession(sessionId);
       dispatch({ type: 'abort_finished' });
+      return result.restoredTexts;
     } catch (error) {
-      dispatch({
-        type: 'operation_failed',
-        message: error instanceof Error ? error.message : String(error),
-        retryable: false,
-      });
+      dispatch(operationFailedAction(error));
+      return [];
     }
   }, [sessionId, state.aborting, state.isRunning]);
+
+  const steerPendingMessage = useCallback(
+    async (messageId: string): Promise<void> => {
+      try {
+        await api.steerPendingMessage(sessionId, messageId);
+      } catch (error) {
+        dispatch(operationFailedAction(error));
+      }
+    },
+    [sessionId]
+  );
+
+  const removePendingMessage = useCallback(
+    async (messageId: string): Promise<void> => {
+      try {
+        await api.removePendingMessage(sessionId, messageId);
+      } catch (error) {
+        dispatch(operationFailedAction(error));
+      }
+    },
+    [sessionId]
+  );
+
+  const takePendingMessages = useCallback(async (): Promise<string[]> => {
+    try {
+      return (await api.takePendingMessages(sessionId)).texts;
+    } catch (error) {
+      dispatch(operationFailedAction(error));
+      return [];
+    }
+  }, [sessionId]);
+
+  const discardPendingMessages = useCallback(async (): Promise<void> => {
+    try {
+      await api.discardPendingMessages(sessionId);
+    } catch (error) {
+      dispatch(operationFailedAction(error));
+    }
+  }, [sessionId]);
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
@@ -708,11 +771,7 @@ export function useChatSession(sessionId: string): ChatSession {
         const session = await api.setThinkingLevel(sessionId, level);
         dispatch({ type: 'thinking_level_finished', session });
       } catch (error) {
-        dispatch({
-          type: 'operation_failed',
-          message: error instanceof Error ? error.message : String(error),
-          retryable: false,
-        });
+        dispatch(operationFailedAction(error));
       }
     },
     [
@@ -739,17 +798,24 @@ export function useChatSession(sessionId: string): ChatSession {
         const session = await api.setSessionModel(sessionId, model);
         dispatch({ type: 'model_finished', session });
       } catch (error) {
-        dispatch({
-          type: 'operation_failed',
-          message: error instanceof Error ? error.message : String(error),
-          retryable: false,
-        });
+        dispatch(operationFailedAction(error));
       }
     },
     [sessionId, state.isRunning, state.session, state.settingModel, state.settingThinkingLevel]
   );
 
-  return { state, send, retry, abort, setThinkingLevel, setModel };
+  return {
+    state,
+    send,
+    retry,
+    abort,
+    steerPendingMessage,
+    removePendingMessage,
+    takePendingMessages,
+    discardPendingMessages,
+    setThinkingLevel,
+    setModel,
+  };
 }
 
 /**

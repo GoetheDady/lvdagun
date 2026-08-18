@@ -2,6 +2,7 @@
 import {
   API_PATHS,
   sessionApiPaths,
+  type AbortSessionResult,
   type AgentSessionState,
   type ChatMessage,
   type CreateSessionResult,
@@ -10,6 +11,7 @@ import {
   type ModelReference,
   type ProviderInfo,
   type SessionSummary,
+  type TakePendingMessagesResult,
   type TestConnectionResult,
   type ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -105,8 +107,20 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  abortSession: (sessionId: string): Promise<void> =>
+  abortSession: (sessionId: string): Promise<AbortSessionResult> =>
     request(sessionApiPaths(sessionId).abort, { method: 'POST' }),
+
+  steerPendingMessage: (sessionId: string, messageId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).pendingMessageSteer(messageId), { method: 'POST' }),
+
+  removePendingMessage: (sessionId: string, messageId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).pendingMessage(messageId), { method: 'DELETE' }),
+
+  takePendingMessages: (sessionId: string): Promise<TakePendingMessagesResult> =>
+    request(sessionApiPaths(sessionId).pendingMessagesTake, { method: 'POST' }),
+
+  discardPendingMessages: (sessionId: string): Promise<void> =>
+    request(sessionApiPaths(sessionId).pendingMessages, { method: 'DELETE' }),
 
   setThinkingLevel: (sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> =>
     request(sessionApiPaths(sessionId).thinkingLevel, {

@@ -55,6 +55,7 @@ beforeEach(() => {
     sessionName: null,
     isRunning: false,
     activeCompaction: null,
+    pendingMessages: [],
     thinkingLevel: 'medium',
     availableThinkingLevels: ['off', 'low', 'medium', 'high'],
     model: {
