@@ -14,7 +14,13 @@ import type {
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import { AgentBusyError, ModelUnavailableError, type HubSession } from './hub';
+import type { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
+import {
+  AgentBusyError,
+  AgentNotRunningError,
+  ModelUnavailableError,
+  type HubSession,
+} from './hub';
 import { toJsonAgentEvent } from './pi-json-event';
 
 const AUTO_TITLE_ENTRY_TYPE = 'lvdagun.auto-title-attempted';
@@ -32,6 +38,7 @@ export class PiHubSession implements HubSession {
   private latestRunSucceeded = false;
   private modelWarning: string | null;
   private unsubscribeSession: (() => void) | null = null;
+  private unsubscribePendingMessages: (() => void) | null = null;
 
   /**
    * 创建 Pi Runtime 会话适配器并绑定当前会话事件。
@@ -41,15 +48,40 @@ export class PiHubSession implements HubSession {
    */
   constructor(
     private readonly runtime: AgentSessionRuntime,
+    private readonly pendingMessages: PendingMessageController,
     modelWarning: string | null = null
   ) {
     this.modelWarning = modelWarning;
     this.id = runtime.session.sessionId;
     this.createdAt = Date.now();
     this.bindSession(runtime.session);
+    this.unsubscribePendingMessages = pendingMessages.subscribe((messages) => {
+      this.emit({ type: 'pending_messages_changed', pendingMessages: messages });
+    });
     runtime.setRebindSession(async (session) => {
       this.bindSession(session);
     });
+  }
+
+  /** @param text - 用户消息 @returns 无返回值 */
+  enqueuePendingMessage(text: string): void {
+    this.pendingMessages.enqueue(text);
+  }
+
+  /** @param messageId - 待处理消息标识 @returns Pi 接受后解决的 Promise */
+  async steerPendingMessage(messageId: string): Promise<void> {
+    if (this.runtime.session.isIdle) throw new AgentNotRunningError();
+    await this.pendingMessages.steer(messageId);
+  }
+
+  /** @param messageId - 待处理消息标识 @returns 无返回值 */
+  removePendingMessage(messageId: string): void {
+    this.pendingMessages.remove(messageId);
+  }
+
+  /** @returns 按排队顺序取回的全部文本 */
+  takePendingMessages(): string[] {
+    return this.pendingMessages.takeAll();
   }
 
   /**
@@ -128,6 +160,7 @@ export class PiHubSession implements HubSession {
       sessionName: session.sessionName ?? null,
       isRunning: !session.isIdle || this.activeCompaction !== null,
       activeCompaction: this.activeCompaction ? { ...this.activeCompaction } : null,
+      pendingMessages: this.pendingMessages.getSnapshot(),
       thinkingLevel: session.thinkingLevel,
       availableThinkingLevels: [...session.getAvailableThinkingLevels()],
       model: this.toAvailableModel(model),
@@ -153,10 +186,8 @@ export class PiHubSession implements HubSession {
    *
    * @returns Agent 完全稳定后解决的 Promise
    */
-  async abort(): Promise<void> {
-    const session = this.runtime.session;
-    session.abortCompaction();
-    await session.abort();
+  async abort(): Promise<string[]> {
+    return this.pendingMessages.abortAndTakeAll();
   }
 
   /**
@@ -182,7 +213,9 @@ export class PiHubSession implements HubSession {
     this.assertIdle();
     const model = this.runtime.services.modelRuntime
       .getAvailableSnapshot()
-      .find((candidate) => candidate.provider === reference.provider && candidate.id === reference.id);
+      .find(
+        (candidate) => candidate.provider === reference.provider && candidate.id === reference.id
+      );
     if (!model) {
       throw new ModelUnavailableError(reference);
     }
@@ -203,6 +236,8 @@ export class PiHubSession implements HubSession {
   async dispose(): Promise<void> {
     this.unsubscribeSession?.();
     this.unsubscribeSession = null;
+    this.unsubscribePendingMessages?.();
+    this.unsubscribePendingMessages = null;
     this.runtime.setRebindSession(undefined);
     await this.runtime.services.settingsManager.flush();
     await this.runtime.dispose();
@@ -216,6 +251,7 @@ export class PiHubSession implements HubSession {
    */
   private bindSession(session: AgentSession): void {
     this.unsubscribeSession?.();
+    this.pendingMessages.bindSession(session);
     this.unsubscribeSession = session.subscribe(this.handleEvent);
   }
 
@@ -294,9 +330,7 @@ export class PiHubSession implements HubSession {
     const entries = session.sessionManager.getBranch();
     if (
       session.sessionName ||
-      entries.some(
-        (entry) => entry.type === 'custom' && entry.customType === AUTO_TITLE_ENTRY_TYPE
-      )
+      entries.some((entry) => entry.type === 'custom' && entry.customType === AUTO_TITLE_ENTRY_TYPE)
     ) {
       return;
     }

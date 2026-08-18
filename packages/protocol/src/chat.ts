@@ -35,13 +35,30 @@ export interface SessionDeletedEvent {
   sessionId: string;
 }
 
+/** Agent 运行期间由驴打滚等待移交的用户消息 */
+export interface PendingMessage {
+  /** Runtime 内稳定且唯一的消息标识 */
+  id: string;
+  /** 用户提交的纯文本 */
+  text: string;
+}
+
+/** 待处理消息集合变化后由 Hub 广播的权威快照 */
+export interface PendingMessagesChangedEvent {
+  /** 驴打滚待处理消息变化事件 */
+  type: 'pending_messages_changed';
+  /** 当前会话中尚未移交给 Pi 的全部消息 */
+  pendingMessages: PendingMessage[];
+}
+
 /** SSE 传输的 Pi JSON 事件与驴打滚会话状态事件 */
 export type AgentStreamEvent =
   | JsonAgentSessionEvent
   | SessionModelChangedEvent
   | SessionStateEvent
   | SessionArchivedEvent
-  | SessionDeletedEvent;
+  | SessionDeletedEvent
+  | PendingMessagesChangedEvent;
 
 /** Pi 会话中的结构化消息 */
 export type ChatMessage = AgentMessage;
@@ -63,6 +80,8 @@ export interface AgentSessionState {
   isRunning: boolean;
   /** 客户端重连时用于恢复压缩状态；没有压缩时为 null */
   activeCompaction: ActiveCompaction | null;
+  /** 尚未移交给 Pi 的待处理消息 */
+  pendingMessages: PendingMessage[];
   /** 当前实际思考等级 */
   thinkingLevel: ThinkingLevel;
   /** 当前模型支持的思考等级 */
@@ -94,6 +113,18 @@ export interface SessionSummary {
 /** 创建持久化会话后的资源标识 */
 export interface CreateSessionResult {
   sessionId: string;
+}
+
+/** 停止 Agent 后应恢复到发起客户端草稿的文本 */
+export interface AbortSessionResult {
+  /** 包含 Pi 临时队列与驴打滚待处理区中的未处理文本 */
+  restoredTexts: string[];
+}
+
+/** 取回全部待处理消息后的文本结果 */
+export interface TakePendingMessagesResult {
+  /** 按原排队顺序返回的文本 */
+  texts: string[];
 }
 
 export type { ThinkingLevel };

@@ -11,6 +11,7 @@ import type {
   ChatMessage,
   ModelConfig,
   ModelReference,
+  PendingMessage,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -33,19 +34,23 @@ class FakeSession implements HubSession {
   readonly createdAt = Date.now();
   readonly messages: ChatMessage[] = [];
   readonly listeners = new Set<(event: AgentStreamEvent) => void>();
+  readonly pendingMessages: PendingMessage[] = [];
   readonly prompt = vi.fn(async (): Promise<void> => {
     this.state = { ...this.state, isRunning: true };
     this.emit({ type: 'agent_start' });
   });
-  readonly abort = vi.fn(async (): Promise<void> => {
+  readonly abort = vi.fn(async (): Promise<string[]> => {
+    const texts = this.takePendingMessages();
     this.state = { ...this.state, isRunning: false };
     this.emit({ type: 'agent_settled' });
+    return texts;
   });
   readonly dispose = vi.fn(async (): Promise<void> => {});
   state: AgentSessionState = {
     sessionName: null,
     isRunning: false,
     activeCompaction: null,
+    pendingMessages: [],
     thinkingLevel: 'medium',
     availableThinkingLevels: ['off', 'medium', 'high'],
     model: availableModels[0]!,
@@ -55,6 +60,33 @@ class FakeSession implements HubSession {
 
   /** @param id - 会话标识 */
   constructor(readonly id: string) {}
+
+  /** @param text - 待处理文本 @returns 新消息 */
+  enqueuePendingMessage(text: string): void {
+    const message = { id: `pending-${this.pendingMessages.length + 1}`, text };
+    this.pendingMessages.push(message);
+    this.syncPendingMessages();
+  }
+
+  /** @param messageId - 消息标识 @returns 无返回值 */
+  async steerPendingMessage(messageId: string): Promise<void> {
+    this.removePendingMessage(messageId);
+  }
+
+  /** @param messageId - 消息标识 @returns 无返回值 */
+  removePendingMessage(messageId: string): void {
+    const index = this.pendingMessages.findIndex((message) => message.id === messageId);
+    if (index >= 0) this.pendingMessages.splice(index, 1);
+    this.syncPendingMessages();
+  }
+
+  /** @returns 全部待处理文本 */
+  takePendingMessages(): string[] {
+    const texts = this.pendingMessages.map((message) => message.text);
+    this.pendingMessages.splice(0);
+    this.syncPendingMessages();
+    return texts;
+  }
 
   /** @param title - 新标题 */
   setSessionName(title: string): void {
@@ -99,6 +131,12 @@ class FakeSession implements HubSession {
   /** @param event - 测试事件 */
   emit(event: AgentStreamEvent): void {
     for (const listener of this.listeners) listener(event);
+  }
+
+  /** @returns 无返回值 */
+  private syncPendingMessages(): void {
+    this.state = { ...this.state, pendingMessages: [...this.pendingMessages] };
+    this.emit({ type: 'pending_messages_changed', pendingMessages: [...this.pendingMessages] });
   }
 }
 
@@ -257,6 +295,11 @@ describe('createSessionManager', () => {
     const manager = createSessionManager(hub, store);
 
     await manager.prompt('saved-a', '任务 A');
+    await manager.prompt('saved-a', '排队消息');
+    expect(sessions.get('saved-a')!.pendingMessages).toEqual([
+      { id: 'pending-1', text: '排队消息' },
+    ]);
+    expect(sessions.get('saved-a')!.prompt).toHaveBeenCalledTimes(1);
     await expect(manager.prompt('saved-b', '任务 B')).rejects.toBeInstanceOf(AgentBusyError);
     sessions.get('saved-a')!.emit({ type: 'agent_settled' });
     sessions.get('saved-a')!.state = { ...sessions.get('saved-a')!.state, isRunning: false };

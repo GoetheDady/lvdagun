@@ -5,16 +5,20 @@
  */
 export type {
   ActiveCompaction,
+  AbortSessionResult,
   AgentSessionState,
   AgentStreamEvent,
   ChatMessage,
   CompactionReason,
   CreateSessionResult,
+  PendingMessage,
+  PendingMessagesChangedEvent,
   SessionArchivedEvent,
   SessionDeletedEvent,
   SessionModelChangedEvent,
   SessionStateEvent,
   SessionSummary,
+  TakePendingMessagesResult,
   ThinkingLevel,
 } from './chat.ts';
 export type {

@@ -212,6 +212,9 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
       abort: async () => {
         pi.state.abortCalls += 1;
       },
+      clearQueue: () => ({ steering: [], followUp: [] }),
+      steer: async () => {},
+      followUp: async () => {},
       abortCompaction: () => {
         pi.state.abortCompactionCalls += 1;
         listener?.({
@@ -467,6 +470,9 @@ describe('createHub 会话能力', () => {
       noThemes: true,
       noContextFiles: true,
     });
+    expect(pi.state.resourceLoaderOptions?.extensionFactories).toEqual([
+      expect.objectContaining({ name: 'lvdagun-pending-messages', hidden: true }),
+    ]);
     expect(pi.state.persistedFiles).toEqual([
       {
         path: '/tmp/lvdagun-test/sessions/test-session.jsonl',
@@ -701,7 +707,11 @@ describe('createHub 会话能力', () => {
   });
 
   it('首次成功运行后使用当前模型生成一次 Pi 会话标题', async () => {
-    const userMessage: ChatMessage = { role: 'user', content: '帮我设计自动标题功能', timestamp: 1 };
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: '帮我设计自动标题功能',
+      timestamp: 1,
+    };
     const answerMessage = assistantMessage('采用 Pi 原生会话标题实现。');
     pi.state.entries = [
       { type: 'message', message: userMessage },
@@ -712,7 +722,10 @@ describe('createHub 会话能力', () => {
       { type: 'agent_end', messages: [answerMessage], willRetry: false },
       { type: 'agent_settled' },
     ];
-    pi.state.streamResult = { ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] };
+    pi.state.streamResult = {
+      ...answerMessage,
+      content: [{ type: 'text', text: '自动生成的会话标题' }],
+    };
     const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',

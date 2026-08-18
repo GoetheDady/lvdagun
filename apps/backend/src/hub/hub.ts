@@ -21,6 +21,17 @@ export class AgentBusyError extends Error {
   }
 }
 
+/** Agent 已经停止，待处理消息不能再调整当前方向 */
+export class AgentNotRunningError extends Error {
+  readonly status = 409;
+
+  /** 创建 Agent 未运行错误。 */
+  constructor() {
+    super('Agent 已停止，消息仍在待处理区');
+    this.name = 'AgentNotRunningError';
+  }
+}
+
 /** 请求的持久化会话不存在 */
 export class SessionNotFoundError extends Error {
   readonly status = 404;
@@ -83,6 +94,18 @@ export interface HubSession {
    */
   prompt(text: string): Promise<void>;
 
+  /** @param text - 运行期间提交的用户文本 @returns 无返回值 */
+  enqueuePendingMessage(text: string): void;
+
+  /** @param messageId - 待处理消息标识 @returns Pi 接受调整方向后解决的 Promise */
+  steerPendingMessage(messageId: string): Promise<void>;
+
+  /** @param messageId - 待处理消息标识 @returns 无返回值 */
+  removePendingMessage(messageId: string): void;
+
+  /** @returns 按排队顺序取回的全部待处理文本 */
+  takePendingMessages(): string[];
+
   /**
    * 订阅 Pi JSON 事件和 Hub 会话状态事件。
    *
@@ -118,7 +141,7 @@ export interface HubSession {
    *
    * @returns Agent 完全稳定后解决的 Promise
    */
-  abort(): Promise<void>;
+  abort(): Promise<string[]>;
 
   /**
    * 设置 Pi 思考等级。

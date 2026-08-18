@@ -4,8 +4,10 @@ import {
   API_PATHS,
   SESSION_API_PATHS,
   type CreateSessionResult,
+  type AbortSessionResult,
   type ModelReference,
   type ThinkingLevel,
+  type TakePendingMessagesResult,
 } from '@lvdagun/protocol';
 
 import type { SessionManager } from '../../sessions/session-manager';
@@ -66,7 +68,31 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
   });
 
   app.post(SESSION_API_PATHS.abort, async (req, res) => {
-    await sessionManager.abort(req.params.sessionId!);
+    const result: AbortSessionResult = {
+      restoredTexts: await sessionManager.abort(req.params.sessionId!),
+    };
+    res.json(result);
+  });
+
+  app.post(SESSION_API_PATHS.pendingMessageSteer, async (req, res) => {
+    await sessionManager.steerPendingMessage(req.params.sessionId!, req.params.messageId!);
+    res.status(204).end();
+  });
+
+  app.delete(SESSION_API_PATHS.pendingMessage, async (req, res) => {
+    await sessionManager.removePendingMessage(req.params.sessionId!, req.params.messageId!);
+    res.status(204).end();
+  });
+
+  app.post(SESSION_API_PATHS.pendingMessagesTake, async (req, res) => {
+    const result: TakePendingMessagesResult = {
+      texts: await sessionManager.takePendingMessages(req.params.sessionId!),
+    };
+    res.json(result);
+  });
+
+  app.delete(SESSION_API_PATHS.pendingMessages, async (req, res) => {
+    await sessionManager.takePendingMessages(req.params.sessionId!);
     res.status(204).end();
   });
 

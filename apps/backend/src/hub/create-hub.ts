@@ -25,6 +25,7 @@ import type {
 
 import { SessionArchivedError, SessionNotFoundError, type Hub, type HubSession } from './hub';
 import { PiHubSession } from './pi-hub-session';
+import { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
 
 const INFRA_PROVIDERS = new Set([
   'faux',
@@ -75,6 +76,7 @@ export function createHub(options: { dataDir: string }): Hub {
     config: Parameters<Hub['createSession']>[0],
     piSessionManager: PiSessionManager
   ): Promise<HubSession> => {
+    const pendingMessages = new PendingMessageController();
     const runtime = await getRuntime();
     if (config.apiKey) {
       await runtime.setRuntimeApiKey(config.provider, config.apiKey);
@@ -124,21 +126,32 @@ export function createHub(options: { dataDir: string }): Hub {
         resourceLoaderOptions: {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           noExtensions: true,
+          extensionFactories: [
+            {
+              name: 'lvdagun-pending-messages',
+              hidden: true,
+              factory: (pi) => {
+                pi.on('agent_end', (event) => pendingMessages.handleAgentEnd(event));
+              },
+            },
+          ],
           noSkills: true,
           noPromptTemplates: true,
           noThemes: true,
           noContextFiles: true,
         },
       });
+      const result = await createAgentSessionFromServices({
+        services,
+        sessionManager: runtimeOptions.sessionManager,
+        sessionStartEvent: runtimeOptions.sessionStartEvent,
+        model,
+        thinkingLevel: storedThinkingLevel,
+        tools: DEFAULT_TOOLS,
+      });
+      pendingMessages.bindSession(result.session);
       return {
-        ...(await createAgentSessionFromServices({
-          services,
-          sessionManager: runtimeOptions.sessionManager,
-          sessionStartEvent: runtimeOptions.sessionStartEvent,
-          model,
-          thinkingLevel: storedThinkingLevel,
-          tools: DEFAULT_TOOLS,
-        })),
+        ...result,
         services,
         diagnostics: services.diagnostics,
       };
@@ -150,7 +163,7 @@ export function createHub(options: { dataDir: string }): Hub {
       sessionManager: piSessionManager,
     });
 
-    return new PiHubSession(agentRuntime, modelWarning);
+    return new PiHubSession(agentRuntime, pendingMessages, modelWarning);
   };
 
   /**

@@ -23,6 +23,10 @@ export const SESSION_API_PATHS = {
   messages: `${API_PATHS.sessions}/:sessionId/messages`,
   prompt: `${API_PATHS.sessions}/:sessionId/prompt`,
   abort: `${API_PATHS.sessions}/:sessionId/abort`,
+  pendingMessages: `${API_PATHS.sessions}/:sessionId/pending-messages`,
+  pendingMessage: `${API_PATHS.sessions}/:sessionId/pending-messages/:messageId`,
+  pendingMessageSteer: `${API_PATHS.sessions}/:sessionId/pending-messages/:messageId/steer`,
+  pendingMessagesTake: `${API_PATHS.sessions}/:sessionId/pending-messages/take`,
   archive: `${API_PATHS.sessions}/:sessionId/archive`,
   model: `${API_PATHS.sessions}/:sessionId/model`,
   thinkingLevel: `${API_PATHS.sessions}/:sessionId/thinking-level`,
@@ -41,6 +45,10 @@ export function sessionApiPaths(sessionId: string): {
   messages: string;
   prompt: string;
   abort: string;
+  pendingMessages: string;
+  pendingMessage: (messageId: string) => string;
+  pendingMessageSteer: (messageId: string) => string;
+  pendingMessagesTake: string;
   archive: string;
   model: string;
   thinkingLevel: string;
@@ -53,6 +61,11 @@ export function sessionApiPaths(sessionId: string): {
     messages: `${base}/messages`,
     prompt: `${base}/prompt`,
     abort: `${base}/abort`,
+    pendingMessages: `${base}/pending-messages`,
+    pendingMessage: (messageId) => `${base}/pending-messages/${encodeURIComponent(messageId)}`,
+    pendingMessageSteer: (messageId) =>
+      `${base}/pending-messages/${encodeURIComponent(messageId)}/steer`,
+    pendingMessagesTake: `${base}/pending-messages/take`,
     archive: `${base}/archive`,
     model: `${base}/model`,
     thinkingLevel: `${base}/thinking-level`,

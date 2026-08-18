@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FileConfigStore } from '../../../src/config/config-store';
-import { AgentBusyError } from '../../../src/hub/hub';
 import { makeFakeHub, startServer, validConfig } from '../test-server';
 
 let dir: string;
@@ -37,7 +36,7 @@ describe('对话接口', () => {
     }
   });
 
-  it('Pi 接受提示后返回 202，忙碌时返回 409', async () => {
+  it('Pi 接受首条提示，运行期间的后续提示默认进入待处理区', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
@@ -50,14 +49,17 @@ describe('对话接口', () => {
       });
       expect(accepted.status).toBe(202);
 
-      sessions[0]!.prompt.mockRejectedValueOnce(new AgentBusyError());
-      const busy = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
+      const queued = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: '并发消息' }),
       });
-      expect(busy.status).toBe(409);
-      await expect(busy.json()).resolves.toEqual({ error: 'Agent 正在运行' });
+      expect(queued.status).toBe(202);
+      expect(sessions[0]!.prompt).toHaveBeenCalledTimes(1);
+      const state = await fetch(`${baseUrl}/api/sessions/session-1`);
+      await expect(state.json()).resolves.toMatchObject({
+        pendingMessages: [{ id: 'pending-1', text: '并发消息' }],
+      });
     } finally {
       await close();
     }
@@ -74,6 +76,7 @@ describe('对话接口', () => {
         sessionName: null,
         isRunning: false,
         activeCompaction: null,
+        pendingMessages: [],
         thinkingLevel: 'medium',
         availableThinkingLevels: ['off', 'low', 'medium', 'high'],
         model: {
@@ -110,12 +113,61 @@ describe('对话接口', () => {
       expect(invalidThinking.status).toBe(400);
 
       const abort = await fetch(`${baseUrl}/api/sessions/session-1/abort`, { method: 'POST' });
-      expect(abort.status).toBe(204);
+      expect(abort.status).toBe(200);
+      await expect(abort.json()).resolves.toEqual({ restoredTexts: [] });
       expect(sessions[0]!.abortCalls).toBe(1);
 
       const next = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' });
       expect(next.status).toBe(201);
       await expect(next.json()).resolves.toEqual({ sessionId: 'session-2' });
+    } finally {
+      await close();
+    }
+  });
+
+  it('支持逐条调整方向、删除以及整队取回和丢弃', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '开始任务' }),
+      });
+      const session = sessions[0]!;
+      session.enqueuePendingMessage('第一条');
+      const first = session.pendingMessages.at(-1)!;
+      session.enqueuePendingMessage('第二条');
+      const second = session.pendingMessages.at(-1)!;
+
+      const steer = await fetch(
+        `${baseUrl}/api/sessions/session-1/pending-messages/${first.id}/steer`,
+        { method: 'POST' }
+      );
+      expect(steer.status).toBe(204);
+
+      const remove = await fetch(
+        `${baseUrl}/api/sessions/session-1/pending-messages/${second.id}`,
+        { method: 'DELETE' }
+      );
+      expect(remove.status).toBe(204);
+
+      session.enqueuePendingMessage('取回一');
+      session.enqueuePendingMessage('取回二');
+      const take = await fetch(`${baseUrl}/api/sessions/session-1/pending-messages/take`, {
+        method: 'POST',
+      });
+      expect(take.status).toBe(200);
+      await expect(take.json()).resolves.toEqual({ texts: ['取回一', '取回二'] });
+
+      session.enqueuePendingMessage('丢弃');
+      const discard = await fetch(`${baseUrl}/api/sessions/session-1/pending-messages`, {
+        method: 'DELETE',
+      });
+      expect(discard.status).toBe(204);
+      expect(session.pendingMessages).toEqual([]);
     } finally {
       await close();
     }

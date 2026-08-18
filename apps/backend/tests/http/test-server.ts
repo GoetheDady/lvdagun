@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   ModelConfig,
   ModelReference,
+  PendingMessage,
   TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -82,6 +83,7 @@ export class FakeSession implements HubSession {
   thinkingLevel: ThinkingLevel = 'medium';
   model: AvailableModel = availableModels[0]!;
   sessionName: string | null = null;
+  readonly pendingMessages: PendingMessage[] = [];
   readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
   private timestamp = 1;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
@@ -104,6 +106,33 @@ export class FakeSession implements HubSession {
     this.emit({ type: 'message_start', message });
     this.emit({ type: 'message_end', message });
   });
+
+  /** @param text - 待处理文本 @returns 新消息 */
+  enqueuePendingMessage = (text: string): void => {
+    const message = { id: `pending-${this.pendingMessages.length + 1}`, text };
+    this.pendingMessages.push(message);
+    this.emit({ type: 'pending_messages_changed', pendingMessages: [...this.pendingMessages] });
+  };
+
+  /** @param messageId - 消息标识 @returns 无返回值 */
+  steerPendingMessage = async (messageId: string): Promise<void> => {
+    this.removePendingMessage(messageId);
+  };
+
+  /** @param messageId - 消息标识 @returns 无返回值 */
+  removePendingMessage = (messageId: string): void => {
+    const index = this.pendingMessages.findIndex((message) => message.id === messageId);
+    if (index >= 0) this.pendingMessages.splice(index, 1);
+    this.emit({ type: 'pending_messages_changed', pendingMessages: [...this.pendingMessages] });
+  };
+
+  /** @returns 全部待处理文本 */
+  takePendingMessages = (): string[] => {
+    const texts = this.pendingMessages.map((message) => message.text);
+    this.pendingMessages.splice(0);
+    this.emit({ type: 'pending_messages_changed', pendingMessages: [] });
+    return texts;
+  };
 
   /**
    * 订阅测试会话的 Pi JSON 事件。
@@ -134,6 +163,7 @@ export class FakeSession implements HubSession {
     sessionName: this.sessionName,
     isRunning: this.isRunning,
     activeCompaction: null,
+    pendingMessages: [...this.pendingMessages],
     thinkingLevel: this.thinkingLevel,
     availableThinkingLevels: [...this.availableThinkingLevels],
     model: this.model,
@@ -152,10 +182,12 @@ export class FakeSession implements HubSession {
    *
    * @returns 操作完成后的 Promise
    */
-  abort = vi.fn(async (): Promise<void> => {
+  abort = vi.fn(async (): Promise<string[]> => {
     this.abortCalls += 1;
+    const restoredTexts = this.takePendingMessages();
     this.isRunning = false;
     this.emit({ type: 'agent_settled' });
+    return restoredTexts;
   });
 
   /**

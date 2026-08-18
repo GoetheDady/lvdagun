@@ -63,8 +63,17 @@ export interface SessionManager {
    */
   prompt(sessionId: string, text: string): Promise<void>;
 
+  /** @param sessionId - 会话标识 @param messageId - 消息标识 @returns 调整方向完成后的 Promise */
+  steerPendingMessage(sessionId: string, messageId: string): Promise<void>;
+
+  /** @param sessionId - 会话标识 @param messageId - 消息标识 @returns 无返回值 */
+  removePendingMessage(sessionId: string, messageId: string): Promise<void>;
+
+  /** @param sessionId - 会话标识 @returns 按排队顺序取回的全部文本 */
+  takePendingMessages(sessionId: string): Promise<string[]>;
+
   /** @param sessionId - 会话标识 @returns Agent 稳定后解决的 Promise */
-  abort(sessionId: string): Promise<void>;
+  abort(sessionId: string): Promise<string[]>;
 
   /**
    * 设置指定会话的思考等级。
@@ -264,8 +273,7 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       for (const session of stored) {
         const record = loadedById.get(session.id);
         const { name, firstMessage, ...metadata } = session;
-        const fallbackTitle =
-          firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : firstMessage.trim();
+        const fallbackTitle = firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : firstMessage.trim();
         summaries.set(session.id, {
           ...metadata,
           title: name?.trim() || fallbackTitle || '新对话',
@@ -309,8 +317,16 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     async prompt(sessionId: string, text: string): Promise<void> {
       const record = await getRecord(sessionId);
+      const state = record.session.getState();
       if (runningSessionId !== null && runningSessionId !== sessionId) {
         throw new AgentBusyError();
+      }
+      if (state.activeCompaction !== null) {
+        throw new AgentBusyError();
+      }
+      if (runningSessionId === sessionId || state.isRunning) {
+        record.session.enqueuePendingMessage(text);
+        return;
       }
       runningSessionId = sessionId;
       try {
@@ -323,8 +339,20 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       }
     },
 
-    async abort(sessionId: string): Promise<void> {
-      await (await getRecord(sessionId)).session.abort();
+    async steerPendingMessage(sessionId: string, messageId: string): Promise<void> {
+      await (await getRecord(sessionId)).session.steerPendingMessage(messageId);
+    },
+
+    async removePendingMessage(sessionId: string, messageId: string): Promise<void> {
+      (await getRecord(sessionId)).session.removePendingMessage(messageId);
+    },
+
+    async takePendingMessages(sessionId: string): Promise<string[]> {
+      return (await getRecord(sessionId)).session.takePendingMessages();
+    },
+
+    async abort(sessionId: string): Promise<string[]> {
+      return (await getRecord(sessionId)).session.abort();
     },
 
     async setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> {
