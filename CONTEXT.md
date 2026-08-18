@@ -24,6 +24,26 @@ _Avoid_: 前端、界面
 Agent Hub 接受一条用户提示后,完成全部模型调用、工具执行、自动重试及收尾的一次处理过程。同一会话同一时间只允许一次 Agent 运行。
 _Avoid_: 请求、回复生成
 
+**调整方向**:
+在 Agent 运行期间补充指令,使其并入当前 Agent 运行并影响后续处理。
+_Avoid_: steer、纠偏消息、立即消息
+
+**排队**:
+在 Agent 运行期间提交消息,等待当前处理路径自然结束后再继续处理,不用于改变当前处理路径。
+_Avoid_: followUp、后续消息
+
+**待处理消息**:
+当前会话中已被接受、由驴打滚等待移交给 Agent 处理的消息集合。消息被调整方向或按排队顺序移交后,不再属于待处理消息。
+_Avoid_: queue_update、队列状态
+
+**内置 Extension**:
+随驴打滚发布并由 Agent Hub 显式加载的 Pi Extension,用于实现确定性产品能力或干预 Agent 生命周期。
+_Avoid_: Pi SDK 补丁、外部 Extension、插件
+
+**外部 Extension**:
+由用户提供并通过资源目录发现的 Pi Extension,其加载与内置 Extension 相互独立。
+_Avoid_: 内置 Extension、插件
+
 **工具运行**:
 Agent 为完成任务而调用一个工具并取得结果的过程。一次 Agent 运行可以包含一个或多个串行或并行的工具运行。
 _Avoid_: 工具消息、工具事件
