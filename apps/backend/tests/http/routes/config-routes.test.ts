@@ -73,7 +73,7 @@ describe('配置接口', () => {
     }
   });
 
-  it('配置变更后释放旧会话，下次对话按新配置重建', async () => {
+  it('运行期间拒绝全局配置变更，空闲后释放旧会话并按新配置重建', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(validConfig);
@@ -95,7 +95,17 @@ describe('配置接口', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(newConfig),
       });
-      expect(put.status).toBe(204);
+      expect(put.status).toBe(409);
+      expect(sessions[0]!.disposeCalls).toBe(0);
+      await expect((await fetch(`${baseUrl}/api/config`)).json()).resolves.toEqual(validConfig);
+
+      sessions[0]!.simulateAssistant('完成');
+      const accepted = await fetch(`${baseUrl}/api/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(newConfig),
+      });
+      expect(accepted.status).toBe(204);
       expect(sessions[0]!.disposeCalls).toBe(1);
 
       await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {

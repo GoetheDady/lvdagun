@@ -1,6 +1,6 @@
 # 通过 SSE 镜像 Pi JSON 事件
 
-Agent Hub 的公开事件协议镜像 Pi SDK 的 `JsonAgentSessionEvent`,由现有 SSE 连接承载其 JSON 数据,而不再维护一套重新命名、重新塑形的 Pi 事件适配协议。SSE 只发送 Pi 事件,不混入 Hub 自有事件;消息历史同样使用 Pi 的结构化消息,以便客户端完整恢复文本、思考、工具调用及结果。项目精确固定 Pi SDK `0.84.1`,升级时显式验证协议和客户端展示。`POST /api/prompt` 只负责校验并接受提示,随后立即返回 `202`;客户端以 Pi 的 `agent_settled` 事件判断本次 Agent 运行已经完全结束。同一会话已有 Agent 运行时,新提示返回 `409`;Pi 的 `steer` 与 `followUp` 排队语义不属于本次范围。这样可以消除自定义事件与 Pi 在消息完成、错误和自动重试语义上的偏差,代价是公开协议会与 Pi SDK 版本绑定;SSE 的心跳、事件 ID、重连和断线补发不属于本次对齐范围。
+Agent Hub 的公开事件协议直接包含 Pi SDK 的 `JsonAgentSessionEvent`,由 SSE 连接承载其 JSON 数据,不再维护一套重新命名、重新塑形的 Pi 事件适配协议。Hub 自有的权威状态变化使用独立事件补充;消息历史同样使用 Pi 的结构化消息,以便客户端完整恢复文本、思考、工具调用及结果。项目精确固定 Pi SDK `0.84.1`,升级时显式验证协议和客户端展示。`POST /api/prompt` 只负责校验并接受提示,随后立即返回 `202`;客户端以 Pi 的 `agent_settled` 事件判断本次 Agent 运行已经完全结束。这样可以消除自定义事件与 Pi 在消息完成、错误和自动重试语义上的偏差,代价是公开协议会与 Pi SDK 版本绑定。SSE 重连恢复见 ADR-0011。
 
 客户端完整消费 Pi 事件,但将其投影为按语义聚合的对话界面,不显示原始事件日志。同一工具调用在 assistant 内容、`tool_execution_*` 进度和 tool result 消息中的数据按工具调用 id 合并为一个展示项,最终消息作为权威结果;助手文本使用 `streamdown` 渲染。客户端显示 Pi 历史中的全部消息类型和已有图片内容,并通过 Pi `AgentSession.abort()` 提供停止 Agent 运行的能力。
 

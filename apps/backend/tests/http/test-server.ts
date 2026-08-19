@@ -11,6 +11,8 @@ import type {
   ModelConfig,
   ModelReference,
   PendingMessage,
+  SessionMessage,
+  SessionSnapshotEvent,
   TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -83,6 +85,7 @@ export class FakeSession implements HubSession {
   thinkingLevel: ThinkingLevel = 'medium';
   model: AvailableModel = availableModels[0]!;
   sessionName: string | null = null;
+  activeAssistant: Extract<ChatMessage, { role: 'assistant' }> | null = null;
   readonly pendingMessages: PendingMessage[] = [];
   readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
   private timestamp = 1;
@@ -152,7 +155,17 @@ export class FakeSession implements HubSession {
    *
    * @returns 消息副本
    */
-  getMessages = (): ChatMessage[] => [...this.messages];
+  getMessages = (): SessionMessage[] =>
+    this.messages.map((message, index) => ({ entryId: `entry-${index + 1}`, message }));
+
+  /** @param entryId - 最后一条用户消息标识 @param text - 修改文本 @returns 新分支历史 */
+  editAndResend = vi.fn(async (entryId: string, text: string): Promise<SessionMessage[]> => {
+    const userIndex = this.messages.findLastIndex((message) => message.role === 'user');
+    if (entryId !== `entry-${userIndex + 1}`) throw new Error('消息已经变化');
+    this.messages.splice(userIndex);
+    await this.prompt(text);
+    return this.getMessages();
+  });
 
   /**
    * 读取测试会话状态。
@@ -169,6 +182,14 @@ export class FakeSession implements HubSession {
     model: this.model,
     availableModels: [...availableModels],
     modelWarning: null,
+  });
+
+  /** @returns 当前测试会话的权威恢复快照 */
+  getSnapshot = (): SessionSnapshotEvent => ({
+    type: 'session_snapshot',
+    messages: this.getMessages(),
+    activeAssistant: this.activeAssistant,
+    state: this.getState(),
   });
 
   /** @param title - 新标题 */
@@ -228,6 +249,27 @@ export class FakeSession implements HubSession {
     this.disposeCalls += 1;
   });
 
+  /** @param text - 快照中已经生成的助手文本 */
+  startAssistant(text: string): void {
+    this.isRunning = true;
+    this.activeAssistant = assistantMessage(text, this.timestamp++, 'pending');
+  }
+
+  /** @param delta - 重连后继续产生的文本增量 */
+  appendAssistantDelta(delta: string): void {
+    const current = this.activeAssistant;
+    if (!current) throw new Error('助手消息尚未开始');
+    const text = current.content
+      .filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('');
+    this.activeAssistant = assistantMessage(text + delta, current.timestamp, 'pending');
+    this.emit({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta },
+    });
+  }
+
   /**
    * 模拟完整的 Pi 助手文本流。
    *
@@ -238,12 +280,19 @@ export class FakeSession implements HubSession {
   simulateAssistant(text: string, stopReason: 'stop' | 'aborted' = 'stop'): void {
     const timestamp = this.timestamp++;
     const startMessage = assistantMessage('', timestamp, 'pending');
+    this.activeAssistant = startMessage;
     this.emit({ type: 'message_start', message: startMessage });
     this.emit({
       type: 'message_update',
       assistantMessageEvent: { type: 'text_start', contentIndex: 0 },
     });
     for (const char of text) {
+      const currentText =
+        this.activeAssistant?.content
+          .filter((content) => content.type === 'text')
+          .map((content) => content.text)
+          .join('') ?? '';
+      this.activeAssistant = assistantMessage(currentText + char, timestamp, 'pending');
       this.emit({
         type: 'message_update',
         assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: char },
@@ -255,6 +304,7 @@ export class FakeSession implements HubSession {
     });
     const message = assistantMessage(text, timestamp, stopReason);
     this.messages.push(message);
+    this.activeAssistant = null;
     this.emit({ type: 'message_end', message });
     this.isRunning = false;
     this.emit({ type: 'agent_end', messages: [message], willRetry: false });
@@ -330,6 +380,19 @@ export function makeFakeHub(): {
       if (archivedSessionIds.has(sessionId)) throw new SessionArchivedError(sessionId);
       if (deletedSessionIds.has(sessionId)) throw new SessionNotFoundError(sessionId);
       const session = new FakeSession(sessionId);
+      sessions.push(session);
+      return session;
+    }),
+    forkSession: vi.fn(async (_options, sourceSessionId, entryId, title) => {
+      const source = sessions.find((session) => session.id === sourceSessionId);
+      if (!source) throw new SessionNotFoundError(sourceSessionId);
+      const entryIndex = Number(entryId.replace('entry-', '')) - 1;
+      while (sessions.some((candidate) => candidate.id === `session-${nextSessionId}`)) {
+        nextSessionId += 1;
+      }
+      const session = new FakeSession(`session-${nextSessionId++}`);
+      session.messages.push(...source.messages.slice(0, entryIndex + 1));
+      session.sessionName = title;
       sessions.push(session);
       return session;
     }),

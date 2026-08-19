@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { Archive, Loader2, MessageSquareOff, RotateCcw, Send, Square } from 'lucide-react';
+import { Archive, Loader2, MessageSquareOff, Send, Square } from 'lucide-react';
 import { useDefaultLayout } from 'react-resizable-panels';
 
 import { SessionSidebar } from '@/components/chat/session-sidebar';
@@ -142,10 +142,12 @@ function ChatWorkspace({
   sessionId: string;
   sessionList: SessionList;
 }): React.JSX.Element {
+  const navigate = useNavigate();
   const {
     state,
     send,
-    retry,
+    forkSession,
+    editAndResend,
     abort,
     steerPendingMessage,
     removePendingMessage,
@@ -156,16 +158,21 @@ function ChatWorkspace({
   } = useChatSession(sessionId);
   const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
+  const [editing, setEditing] = useState<{
+    entryId: string;
+    draft: string;
+    submitting: boolean;
+  } | null>(null);
+  const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
+  const transcriptRef = useRef<HTMLElement>(null);
+  const followsOutputRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const anotherRunningSession = sessionList.sessions.find(
-    (session) => session.isRunning && session.id !== sessionId
-  );
   const hasTranscript =
     state.messages.length > 0 ||
     state.activeAssistant !== null ||
     state.retries.length > 0 ||
     state.compaction !== null;
-  const firstUserMessage = state.messages.find((message) => message.role === 'user');
+  const firstUserMessage = state.messages.find(({ message }) => message.role === 'user')?.message;
   const firstUserText =
     firstUserMessage?.role === 'user'
       ? typeof firstUserMessage.content === 'string'
@@ -178,13 +185,19 @@ function ChatWorkspace({
   const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
   const sessionTitle =
     state.session?.sessionName?.trim() || firstUserText.trim() || sidebarTitle || '新对话';
+  const editableUserEntryId = state.isRunning || !state.synchronized
+    ? null
+    : ([...state.messages].reverse().find(({ message }) => message.role === 'user')?.entryId ??
+      null);
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
   }, [sessionTitle]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: state.isRunning ? 'smooth' : 'auto' });
+    if (followsOutputRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: state.isRunning ? 'smooth' : 'auto' });
+    }
   }, [
     state.activeAssistant,
     state.compaction,
@@ -215,19 +228,47 @@ function ChatWorkspace({
       state.compaction?.status === 'running' ||
       state.settingModel ||
       state.settingThinkingLevel ||
-      anotherRunningSession
+      editing !== null
     ) {
       return;
     }
     setInput('');
-    void send(text);
+    void send(text).then((accepted) => {
+      if (!accepted) setInput((draft) => prependDraft([text], draft));
+    });
   };
 
-  const inputPlaceholder = anotherRunningSession
-    ? '另一个会话正在运行'
+  const inputPlaceholder = editing
+    ? '正在编辑历史消息'
     : state.compaction?.status === 'running'
       ? '正在压缩上下文'
       : '输入消息';
+
+  /** 从一条已完成的助手回复创建会话并切换过去。 */
+  const handleFork = (entryId: string): void => {
+    if (forkingEntryId !== null) return;
+    setForkingEntryId(entryId);
+    void forkSession(entryId).then(async (forkedSessionId) => {
+      setForkingEntryId(null);
+      if (!forkedSessionId) return;
+      await refreshSessionList();
+      navigate(`/sessions/${encodeURIComponent(forkedSessionId)}`);
+    });
+  };
+
+  /** 提交原位编辑；失败时保留草稿和旧分支供重试。 */
+  const handleSubmitEdit = (): void => {
+    if (!editing || editing.submitting || !editing.draft.trim()) return;
+    const { entryId, draft } = editing;
+    setEditing({ entryId, draft, submitting: true });
+    void editAndResend(entryId, draft).then((accepted) => {
+      if (accepted) {
+        setEditing(null);
+      } else {
+        setEditing({ entryId, draft, submitting: false });
+      }
+    });
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
@@ -240,7 +281,9 @@ function ChatWorkspace({
                 state.isRunning ? 'animate-pulse bg-soy' : 'bg-wood'
               }`}
             />
-            {state.compaction?.status === 'running'
+            {state.showReconnectNotice
+              ? '正在重新连接'
+              : state.compaction?.status === 'running'
               ? '压缩中'
               : state.isRunning
                 ? '运行中'
@@ -249,7 +292,16 @@ function ChatWorkspace({
         </div>
       </header>
 
-      <section className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+      <section
+        ref={transcriptRef}
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        onScroll={() => {
+          const element = transcriptRef.current;
+          if (!element) return;
+          followsOutputRef.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+        }}
+      >
         <div className="mx-auto max-w-3xl">
           {!state.loading && !hasTranscript ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-5 text-center">
@@ -278,18 +330,23 @@ function ChatWorkspace({
               retries={state.retries}
               compaction={state.compaction}
               loading={state.loading}
+              editableUserEntryId={editableUserEntryId}
+              editing={editing}
+              forkingEntryId={forkingEntryId}
+              actionsDisabled={!state.synchronized}
+              onStartEdit={(entryId, draft) => setEditing({ entryId, draft, submitting: false })}
+              onEditDraftChange={(draft) =>
+                setEditing((current) => (current ? { ...current, draft } : null))
+              }
+              onCancelEdit={() => setEditing(null)}
+              onSubmitEdit={handleSubmitEdit}
+              onFork={handleFork}
             />
           )}
 
           {state.error ? (
             <div className="mt-5 flex max-w-[min(94%,48rem)] items-center gap-3 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
               <span className="min-w-0 flex-1 break-words">{state.error.message}</span>
-              {state.error.retryable ? (
-                <Button variant="outline" size="sm" onClick={retry}>
-                  <RotateCcw />
-                  重试
-                </Button>
-              ) : null}
             </div>
           ) : null}
           <div ref={bottomRef} />
@@ -310,7 +367,7 @@ function ChatWorkspace({
           >
             <PendingMessages
               messages={state.session?.pendingMessages ?? []}
-              disabled={state.aborting}
+              disabled={state.aborting || editing !== null || !state.synchronized}
               steerDisabled={!state.isRunning || state.compaction?.status === 'running'}
               onSteer={(messageId) => void steerPendingMessage(messageId)}
               onRemove={(messageId) => void removePendingMessage(messageId)}
@@ -326,7 +383,7 @@ function ChatWorkspace({
               placeholder={inputPlaceholder}
               rows={2}
               value={input}
-              disabled={state.loading || Boolean(anotherRunningSession)}
+              disabled={state.loading || editing !== null}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -341,7 +398,13 @@ function ChatWorkspace({
                   <ModelSelector
                     value={state.session.model}
                     models={state.session.availableModels}
-                    disabled={state.isRunning || state.settingModel || state.settingThinkingLevel}
+                    disabled={
+                      !state.synchronized ||
+                      state.isRunning ||
+                      state.settingModel ||
+                      state.settingThinkingLevel ||
+                      editing !== null
+                    }
                     loading={state.settingModel}
                     onSelect={(model) => void setModel(model)}
                   />
@@ -350,7 +413,12 @@ function ChatWorkspace({
                     key={`${state.session.model.provider}:${state.session.model.id}`}
                     value={state.session.thinkingLevel}
                     levels={state.session.availableThinkingLevels}
-                    disabled={state.isRunning || state.settingModel}
+                    disabled={
+                      !state.synchronized ||
+                      state.isRunning ||
+                      state.settingModel ||
+                      editing !== null
+                    }
                     loading={state.settingThinkingLevel}
                     onCommit={setThinkingLevel}
                   />
@@ -384,7 +452,8 @@ function ChatWorkspace({
                     state.settingModel ||
                     state.settingThinkingLevel ||
                     state.loading ||
-                    Boolean(anotherRunningSession)
+                    !state.synchronized ||
+                    editing !== null
                   }
                   title="发送"
                   aria-label="发送"

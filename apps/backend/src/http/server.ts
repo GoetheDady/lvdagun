@@ -6,7 +6,11 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { ConfigStore } from '../config/config-store';
 import { AgentBusyError } from '../hub/hub';
 import type { Hub } from '../hub/hub';
-import { NotConfiguredError, createSessionManager } from '../sessions/session-manager';
+import {
+  NotConfiguredError,
+  createSessionManager,
+  type SessionManager,
+} from '../sessions/session-manager';
 import { registerCatalogRoutes } from './routes/catalog-routes';
 import { registerChatRoutes } from './routes/chat-routes';
 import { registerConfigRoutes } from './routes/config-routes';
@@ -16,6 +20,8 @@ import { registerEventRoutes } from './routes/event-routes';
 export interface ServerDeps {
   configStore: ConfigStore;
   hub: Hub;
+  /** CLI 需要持有同一实例以便退出时释放全部 Runtime。 */
+  sessionManager?: SessionManager;
   /** 生产环境客户端构建产物目录；开发环境不提供 */
   webDist?: string;
 }
@@ -30,7 +36,7 @@ export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   app.use(express.json());
 
-  const sessionManager = createSessionManager(deps.hub, deps.configStore);
+  const sessionManager = deps.sessionManager ?? createSessionManager(deps.hub, deps.configStore);
 
   registerConfigRoutes(app, deps.configStore, sessionManager);
   registerCatalogRoutes(app, deps.hub);

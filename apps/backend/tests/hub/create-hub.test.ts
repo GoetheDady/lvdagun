@@ -868,9 +868,10 @@ describe('createHub 会话能力', () => {
       },
     ];
     pi.state.entries = [
-      { type: 'message', message: oldMessage },
+      { type: 'message', id: 'entry-old', message: oldMessage },
       {
         type: 'compaction',
+        id: 'entry-summary',
         summary: '摘要',
         tokensBefore: 100,
         timestamp: '1970-01-01T00:00:00.002Z',
@@ -884,12 +885,18 @@ describe('createHub 会话能力', () => {
     });
 
     expect(session.getMessages()).toEqual([
-      oldMessage,
       {
-        role: 'compactionSummary',
-        summary: '摘要',
-        tokensBefore: 100,
-        timestamp: 2,
+        entryId: 'entry-old',
+        message: oldMessage,
+      },
+      {
+        entryId: 'entry-summary',
+        message: {
+          role: 'compactionSummary',
+          summary: '摘要',
+          tokensBefore: 100,
+          timestamp: 2,
+        },
       },
     ]);
   });

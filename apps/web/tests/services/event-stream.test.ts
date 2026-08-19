@@ -46,16 +46,17 @@ describe('subscribeEvents', () => {
     ]);
   });
 
-  it('连接失败和退订都会关闭事件流', () => {
-    const onError = vi.fn();
-    const connectionError = new Error('连接被拒绝');
-    const unsubscribe = subscribeEvents('session-a', vi.fn(), onError);
+  it('连接失败交给原生 EventSource 重连，只有退订才关闭', () => {
+    const onDisconnect = vi.fn();
+    const unsubscribe = subscribeEvents('session-a', vi.fn(), onDisconnect);
     const source = FakeEventSource.instances[0]!;
 
-    source.onerror?.(new ErrorEvent('error', { error: connectionError }));
+    source.onerror?.(new Event('error'));
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    expect(source.close).not.toHaveBeenCalled();
+
     unsubscribe();
 
-    expect(onError).toHaveBeenCalledWith(connectionError);
-    expect(source.close).toHaveBeenCalledTimes(2);
+    expect(source.close).toHaveBeenCalledOnce();
   });
 });

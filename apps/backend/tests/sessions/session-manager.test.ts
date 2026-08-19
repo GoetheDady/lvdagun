@@ -12,6 +12,8 @@ import type {
   ModelConfig,
   ModelReference,
   PendingMessage,
+  SessionMessage,
+  SessionSnapshotEvent,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -35,7 +37,8 @@ class FakeSession implements HubSession {
   readonly messages: ChatMessage[] = [];
   readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   readonly pendingMessages: PendingMessage[] = [];
-  readonly prompt = vi.fn(async (): Promise<void> => {
+  readonly prompt = vi.fn(async (text: string): Promise<void> => {
+    void text;
     this.state = { ...this.state, isRunning: true };
     this.emit({ type: 'agent_start' });
   });
@@ -101,13 +104,32 @@ class FakeSession implements HubSession {
   }
 
   /** @returns 消息副本 */
-  getMessages(): ChatMessage[] {
-    return [...this.messages];
+  getMessages(): SessionMessage[] {
+    return this.messages.map((message, index) => ({ entryId: `entry-${index + 1}`, message }));
+  }
+
+  /** @param entryId - 用户消息标识 @param text - 修改文本 @returns 新分支历史 */
+  async editAndResend(entryId: string, text: string): Promise<SessionMessage[]> {
+    const userIndex = this.messages.findLastIndex((message) => message.role === 'user');
+    if (entryId !== `entry-${userIndex + 1}`) throw new Error('消息已经变化');
+    this.messages.splice(userIndex);
+    await this.prompt(text);
+    return this.getMessages();
   }
 
   /** @returns 状态副本 */
   getState(): AgentSessionState {
     return { ...this.state, availableThinkingLevels: [...this.state.availableThinkingLevels] };
+  }
+
+  /** @returns 权威恢复快照 */
+  getSnapshot(): SessionSnapshotEvent {
+    return {
+      type: 'session_snapshot',
+      messages: this.getMessages(),
+      activeAssistant: null,
+      state: this.getState(),
+    };
   }
 
   /** @param level - 新思考等级 @returns 更新后的状态 */
@@ -190,6 +212,15 @@ function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
       sessions.set(sessionId, session);
       return session;
     }),
+    forkSession: vi.fn(async (_config, sourceSessionId, entryId, title) => {
+      const source = sessions.get(sourceSessionId) ?? new FakeSession(sourceSessionId);
+      const session = new FakeSession(`new-${nextId++}`);
+      const entryIndex = Number(entryId.replace('entry-', '')) - 1;
+      session.messages.push(...source.messages.slice(0, entryIndex + 1));
+      session.setSessionName(title);
+      sessions.set(session.id, session);
+      return session;
+    }),
     archiveSession: vi.fn(async () => {}),
     deleteSession: vi.fn(async () => {}),
   };
@@ -259,16 +290,18 @@ describe('createSessionManager', () => {
     const manager = createSessionManager(hub, store);
     const sessionId = await manager.createSession();
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
-    const unsubscribe = await manager.subscribe(sessionId, listener);
+    const subscription = await manager.subscribe(sessionId, listener);
 
-    expect(listener).toHaveBeenNthCalledWith(1, {
-      type: 'session_state',
+    expect(subscription.snapshot).toEqual({
+      type: 'session_snapshot',
+      messages: [],
+      activeAssistant: null,
       state: sessions.get(sessionId)!.state,
     });
     sessions.get(sessionId)!.emit({ type: 'agent_start' });
     expect(listener).toHaveBeenCalledWith({ type: 'agent_start' });
     expect((await manager.listSessions())[0]).toMatchObject({ id: sessionId, isRunning: false });
-    unsubscribe();
+    subscription.unsubscribe();
   });
 
   it('重命名会话并转发 Pi 标题变化事件', async () => {
@@ -288,7 +321,7 @@ describe('createSessionManager', () => {
     });
   });
 
-  it('一个会话运行时拒绝另一会话启动，稳定后释放全局约束', async () => {
+  it('同一会话后续消息排队，不同会话可以并行运行', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
@@ -300,10 +333,57 @@ describe('createSessionManager', () => {
       { id: 'pending-1', text: '排队消息' },
     ]);
     expect(sessions.get('saved-a')!.prompt).toHaveBeenCalledTimes(1);
-    await expect(manager.prompt('saved-b', '任务 B')).rejects.toBeInstanceOf(AgentBusyError);
-    sessions.get('saved-a')!.emit({ type: 'agent_settled' });
-    sessions.get('saved-a')!.state = { ...sessions.get('saved-a')!.state, isRunning: false };
     await expect(manager.prompt('saved-b', '任务 B')).resolves.toBeUndefined();
+    expect(sessions.get('saved-b')!.prompt).toHaveBeenCalledWith('任务 B');
+  });
+
+  it('同一会话会等待前一条提示完成前置校验后再决定排队', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+    await manager.getState('saved-a');
+    const session = sessions.get('saved-a')!;
+    let acceptFirst!: () => void;
+    session.prompt.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acceptFirst = () => {
+            session.state = { ...session.state, isRunning: true };
+            resolve();
+          };
+        })
+    );
+
+    const first = manager.prompt('saved-a', '第一条');
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1));
+    const second = manager.prompt('saved-a', '第二条');
+    expect(session.pendingMessages).toEqual([]);
+
+    acceptFirst();
+    await first;
+    await second;
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(session.pendingMessages).toEqual([{ id: 'pending-1', text: '第二条' }]);
+  });
+
+  it('从助手回复创建独立派生会话并继承带后缀的源标题', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(config);
+    const manager = createSessionManager(hub, store);
+
+    const forkedId = await manager.forkSession('saved-a', 'entry-assistant');
+
+    expect(hub.forkSession).toHaveBeenCalledWith(
+      config,
+      'saved-a',
+      'entry-assistant',
+      '持久化标题（分叉）'
+    );
+    expect(forkedId).toMatch(/^new-/);
+    await manager.getState(forkedId);
+    expect(hub.openSession).not.toHaveBeenCalledWith(config, forkedId);
   });
 
   it('配置失效时释放所有已加载会话', async () => {
@@ -314,7 +394,7 @@ describe('createSessionManager', () => {
     await manager.getState('saved-a');
     await manager.getState('saved-b');
 
-    await manager.invalidate();
+    await manager.updateConfig({ ...config, modelId: 'claude-b' });
     expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
     expect(sessions.get('saved-b')!.dispose).toHaveBeenCalledTimes(1);
   });

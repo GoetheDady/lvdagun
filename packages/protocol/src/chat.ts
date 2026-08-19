@@ -11,12 +11,24 @@ export interface SessionModelChangedEvent {
   state: AgentSessionState;
 }
 
-/** SSE 建连后用于校准 HTTP 初始化竞态的权威会话快照 */
-export interface SessionStateEvent {
-  /** 会话事件流的初始状态 */
-  type: 'session_state';
-  /** 建立订阅时的权威会话状态 */
+/** SSE 建连或重连时用于恢复会话展示与运行状态的权威快照 */
+export interface SessionSnapshotEvent {
+  /** 会话恢复快照事件 */
+  type: 'session_snapshot';
+  /** 当前分支的完整展示历史 */
+  messages: SessionMessage[];
+  /** 建立快照时仍在生成的助手消息；空闲时为 null */
+  activeAssistant: Extract<ChatMessage, { role: 'assistant' }> | null;
+  /** 建立快照时的权威会话状态 */
   state: AgentSessionState;
+}
+
+/** SSE 建连时会话已归档、删除或不存在的终态事件 */
+export interface SessionUnavailableEvent {
+  /** 会话不可继续访问 */
+  type: 'session_unavailable';
+  /** 不可访问原因 */
+  reason: 'archived' | 'missing';
 }
 
 /** 会话归档后由 Hub 广播的生命周期事件 */
@@ -51,17 +63,35 @@ export interface PendingMessagesChangedEvent {
   pendingMessages: PendingMessage[];
 }
 
+/** 当前分支历史被服务端原子替换后的权威快照 */
+export interface SessionHistoryChangedEvent {
+  /** 驴打滚会话历史变化事件 */
+  type: 'session_history_changed';
+  /** 当前分支的完整展示历史 */
+  messages: SessionMessage[];
+}
+
 /** SSE 传输的 Pi JSON 事件与驴打滚会话状态事件 */
 export type AgentStreamEvent =
   | JsonAgentSessionEvent
   | SessionModelChangedEvent
-  | SessionStateEvent
+  | SessionSnapshotEvent
+  | SessionUnavailableEvent
   | SessionArchivedEvent
   | SessionDeletedEvent
-  | PendingMessagesChangedEvent;
+  | PendingMessagesChangedEvent
+  | SessionHistoryChangedEvent;
 
 /** Pi 会话中的结构化消息 */
 export type ChatMessage = AgentMessage;
+
+/** 带 Pi 会话条目标识的展示消息 */
+export interface SessionMessage {
+  /** Pi 当前分支中的稳定条目标识；尚未持久化的流式消息为 null */
+  entryId: string | null;
+  /** Pi 结构化消息 */
+  message: ChatMessage;
+}
 
 /** Pi 上下文压缩的触发原因 */
 export type CompactionReason = Extract<AgentStreamEvent, { type: 'compaction_start' }>['reason'];
@@ -113,6 +143,16 @@ export interface SessionSummary {
 /** 创建持久化会话后的资源标识 */
 export interface CreateSessionResult {
   sessionId: string;
+}
+
+/** 从历史助手回复派生新会话后的资源标识 */
+export interface ForkSessionResult {
+  sessionId: string;
+}
+
+/** 编辑并重发被接受后的当前分支历史 */
+export interface EditResendResult {
+  messages: SessionMessage[];
 }
 
 /** 停止 Agent 后应恢复到发起客户端草稿的文本 */

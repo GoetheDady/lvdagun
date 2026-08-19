@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
+import type { AgentStreamEvent, ChatMessage, SessionMessage } from '@lvdagun/protocol';
 
 import { FileConfigStore } from '../../../src/config/config-store';
 import { makeFakeHub, openEvents, startServer, validConfig } from '../test-server';
@@ -46,7 +46,9 @@ describe('事件流接口', () => {
     const events = await openEvents(baseUrl);
     try {
       await expect(events.nextEvent()).resolves.toMatchObject({
-        type: 'session_state',
+        type: 'session_snapshot',
+        messages: [],
+        activeAssistant: null,
         state: { model: { provider: 'anthropic', id: 'claude-a' } },
       });
       const response = await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
@@ -92,11 +94,70 @@ describe('事件流接口', () => {
       });
 
       const messages = await fetch(`${baseUrl}/api/sessions/session-1/messages`);
-      const history = (await messages.json()) as ChatMessage[];
-      expect(history.map((message) => [message.role, firstText(message)])).toEqual([
+      const history = (await messages.json()) as SessionMessage[];
+      expect(history.map(({ message }) => [message.role, firstText(message)])).toEqual([
         ['user', '你好'],
         ['assistant', '你好呀'],
       ]);
+    } finally {
+      events.close();
+      await close();
+    }
+  });
+
+  it('重连先恢复已生成内容，再继续推送实时增量', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    const first = await openEvents(baseUrl);
+    try {
+      await first.nextEvent();
+      sessions[0]!.startAssistant('已经生成');
+      first.close();
+
+      const reconnected = await openEvents(baseUrl);
+      try {
+        await expect(reconnected.nextEvent()).resolves.toMatchObject({
+          type: 'session_snapshot',
+          activeAssistant: { content: [{ type: 'text', text: '已经生成' }] },
+          state: { isRunning: true },
+        });
+
+        sessions[0]!.appendAssistantDelta('，继续输出');
+        await expect(reconnected.nextEvent()).resolves.toEqual({
+          type: 'message_update',
+          assistantMessageEvent: {
+            type: 'text_delta',
+            contentIndex: 0,
+            delta: '，继续输出',
+          },
+        });
+      } finally {
+        reconnected.close();
+      }
+    } finally {
+      first.close();
+      await close();
+    }
+  });
+
+  it.each([
+    ['archived', 'archiveSession'] as const,
+    ['missing', 'deleteSession'] as const,
+  ])('会话为 %s 时发送终态事件并关闭 SSE', async (reason, operation) => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    await hub[operation]('session-1');
+    const { baseUrl, close } = await startServer(hub, store);
+    const events = await openEvents(baseUrl);
+    try {
+      await expect(events.nextEvent()).resolves.toEqual({
+        type: 'session_unavailable',
+        reason,
+      });
+      await expect(events.nextEvent()).rejects.toThrow('SSE 流已关闭');
     } finally {
       events.close();
       await close();

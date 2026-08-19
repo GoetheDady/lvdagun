@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Brain,
@@ -6,14 +6,20 @@ import {
   ChevronRight,
   CircleStop,
   Clock3,
+  Copy,
   FileTerminal,
   Loader2,
+  Pencil,
+  Send,
+  Split,
   Wrench,
+  X,
 } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 
-import type { ChatMessage } from '@lvdagun/protocol';
+import type { ChatMessage, SessionMessage } from '@lvdagun/protocol';
 
+import { Button } from '@/components/ui/button';
 import type {
   AssistantChatMessage,
   CompactionState,
@@ -26,12 +32,21 @@ type UserChatMessage = Extract<ChatMessage, { role: 'user' }>;
 
 /** 对话记录组件所需的语义状态。 */
 interface ChatTranscriptProps {
-  messages: ChatMessage[];
+  messages: SessionMessage[];
   activeAssistant: AssistantChatMessage | null;
   toolRuns: Record<string, ToolRunState>;
   retries: RetryRecord[];
   compaction: CompactionState | null;
   loading: boolean;
+  editableUserEntryId: string | null;
+  editing: { entryId: string; draft: string; submitting: boolean } | null;
+  forkingEntryId: string | null;
+  actionsDisabled: boolean;
+  onStartEdit: (entryId: string, text: string) => void;
+  onEditDraftChange: (draft: string) => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: () => void;
+  onFork: (entryId: string) => void;
 }
 
 /**
@@ -55,15 +70,13 @@ function formatValue(value: unknown): string {
  * 格式化消息时间。
  *
  * @param timestamp - Unix 毫秒时间戳
- * @returns 当前区域设置下的日期时间
+ * @returns 当前区域设置下的小时和分钟
  */
 function formatTime(timestamp: number): string {
   return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
+    hourCycle: 'h23',
   }).format(timestamp);
 }
 
@@ -135,14 +148,107 @@ function MessageContent(props: {
  * @param props.message - Pi 用户消息
  * @returns 右对齐的用户消息元素
  */
-function UserMessage(props: { message: UserChatMessage }): React.JSX.Element {
+function UserMessage(props: {
+  message: UserChatMessage;
+  entryId: string | null;
+  editable: boolean;
+  editing: { draft: string; submitting: boolean } | null;
+  onStartEdit: (entryId: string, text: string) => void;
+  onEditDraftChange: (draft: string) => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: () => void;
+}): React.JSX.Element {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (props.editing) textareaRef.current?.focus();
+  }, [props.editing]);
+
+  const text =
+    typeof props.message.content === 'string'
+      ? props.message.content
+      : props.message.content
+          .filter((content) => content.type === 'text')
+          .map((content) => content.text)
+          .join('\n');
+
+  if (props.editing) {
+    return (
+      <article className="flex justify-end">
+        <div className="w-full max-w-[min(88%,42rem)] rounded-md bg-primary p-2 text-primary-foreground">
+          <textarea
+            ref={textareaRef}
+            aria-label="编辑用户消息"
+            className="block min-h-24 w-full resize-y rounded-sm bg-primary-foreground/10 px-2 py-1.5 text-sm leading-6 outline-none ring-1 ring-primary-foreground/25 focus:ring-primary-foreground/50"
+            value={props.editing.draft}
+            disabled={props.editing.submitting}
+            onChange={(event) => props.onEditDraftChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') props.onCancelEdit();
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                props.onSubmitEdit();
+              }
+            }}
+          />
+          <div className="mt-2 flex justify-end gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"
+              title="取消编辑"
+              aria-label="取消编辑"
+              disabled={props.editing.submitting}
+              onClick={props.onCancelEdit}
+            >
+              <X />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              className="bg-background text-foreground hover:bg-background/90 hover:text-foreground"
+              title="发送编辑后的消息"
+              aria-label="发送编辑后的消息"
+              disabled={!props.editing.draft.trim() || props.editing.submitting}
+              onClick={props.onSubmitEdit}
+            >
+              {props.editing.submitting ? <Loader2 className="animate-spin" /> : <Send />}
+            </Button>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
-    <article className="flex justify-end">
+    <article className="group flex flex-col items-end">
       <div className="max-w-[min(88%,42rem)] rounded-md bg-primary px-3.5 py-2.5 text-primary-foreground">
         <MessageContent content={props.message.content} />
-        <time className="mt-1.5 block text-right text-[11px] opacity-70">
-          {formatTime(props.message.timestamp)}
-        </time>
+      </div>
+      <div className="pointer-events-none mt-1 flex min-h-7 items-center justify-end gap-1 text-muted-foreground opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        <time className="px-1 text-xs">{formatTime(props.message.timestamp)}</time>
+        {props.editable && props.entryId ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            title="编辑并重发"
+            aria-label="编辑并重发"
+            onClick={() => props.onStartEdit(props.entryId!, text)}
+          >
+            <Pencil className="size-4" />
+          </Button>
+        ) : null}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          title="复制消息"
+          aria-label="复制消息"
+          disabled={!text}
+          onClick={() => void navigator.clipboard.writeText(text)}
+        >
+          <Copy className="size-4" />
+        </Button>
       </div>
     </article>
   );
@@ -255,14 +361,21 @@ function ToolRun(props: {
  */
 function AssistantMessage(props: {
   message: AssistantChatMessage;
+  entryId?: string | null;
   streaming: boolean;
+  forking?: boolean;
+  actionsDisabled?: boolean;
+  onFork?: (entryId: string) => void;
   toolRuns: Record<string, ToolRunState>;
   toolResults: Map<string, ToolResultChatMessage>;
 }): React.JSX.Element {
-  const usage = props.message.usage;
+  const text = props.message.content
+    .map((content) => (content.type === 'text' ? content.text : ''))
+    .filter(Boolean)
+    .join('\n');
 
   return (
-    <article className="max-w-[min(94%,48rem)] space-y-2.5">
+    <article className="group max-w-[min(94%,48rem)] space-y-2.5">
       {props.message.content.map((content, index) => {
         if (content.type === 'thinking') {
           return (
@@ -305,29 +418,37 @@ function AssistantMessage(props: {
       ) : null}
 
       {!props.streaming ? (
-        <details className="group text-[11px] text-muted-foreground">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1">
-            {props.message.provider} / {props.message.responseModel ?? props.message.model}
-            <ChevronRight className="size-3 transition-transform group-open:rotate-90" />
-          </summary>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted/50 p-3">
-            <dt>时间</dt>
-            <dd>{formatTime(props.message.timestamp)}</dd>
-            <dt>模型</dt>
-            <dd className="break-all">{props.message.model}</dd>
-            <dt>提供方</dt>
-            <dd>{props.message.provider}</dd>
-            <dt>结束原因</dt>
-            <dd>{props.message.stopReason}</dd>
-            <dt>Token</dt>
-            <dd>
-              输入 {usage.input} / 输出 {usage.output} / 缓存读取 {usage.cacheRead} / 总计{' '}
-              {usage.totalTokens}
-            </dd>
-            <dt>费用</dt>
-            <dd>${usage.cost.total.toFixed(6)}</dd>
-          </dl>
-        </details>
+        <div className="pointer-events-none flex min-h-7 items-center gap-1 text-muted-foreground opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            title="复制消息"
+            aria-label="复制消息"
+            disabled={!text}
+            onClick={() => void navigator.clipboard.writeText(text)}
+          >
+            <Copy className="size-4" />
+          </Button>
+          {props.entryId ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              title="分叉为新会话"
+              aria-label="分叉为新会话"
+            disabled={props.forking || props.actionsDisabled}
+              onClick={() => props.onFork?.(props.entryId!)}
+            >
+              {props.forking ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Split className="size-4 rotate-90" />
+              )}
+            </Button>
+          ) : null}
+          <time className="px-1 text-xs">{formatTime(props.message.timestamp)}</time>
+        </div>
       ) : null}
     </article>
   );
@@ -409,11 +530,7 @@ function SpecialMessage(props: {
  */
 function CompactionDivider(): React.JSX.Element {
   return (
-    <div
-      className="flex w-full items-center gap-3 py-3"
-      role="separator"
-      aria-label="压缩成功"
-    >
+    <div className="flex w-full items-center gap-3 py-3" role="separator" aria-label="压缩成功">
       <div className="h-px flex-1 bg-border" aria-hidden="true" />
       <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
         <Check className="size-3.5 text-primary" />
@@ -521,6 +638,7 @@ export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
     () =>
       new Map(
         props.messages
+          .map(({ message }) => message)
           .filter((message): message is ToolResultChatMessage => message.role === 'toolResult')
           .map((message) => [message.toolCallId, message])
       ),
@@ -529,7 +647,7 @@ export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
   const pairedToolCallIds = useMemo(
     () =>
       new Set(
-        props.messages.flatMap((message) =>
+        props.messages.flatMap(({ message }) =>
           message.role === 'assistant'
             ? message.content
                 .filter((content) => content.type === 'toolCall')
@@ -551,17 +669,37 @@ export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
 
   return (
     <div className="space-y-5">
-      {props.messages.map((message, index) => {
-        const key = `${message.role}-${message.timestamp}-${index}`;
+      {props.messages.map(({ entryId, message }, index) => {
+        const key = entryId ?? `${message.role}-${message.timestamp}-${index}`;
         if (message.role === 'user') {
-          return <UserMessage key={key} message={message} />;
+          return (
+            <UserMessage
+              key={key}
+              message={message}
+              entryId={entryId}
+              editable={entryId !== null && entryId === props.editableUserEntryId}
+              editing={
+                entryId !== null && props.editing?.entryId === entryId
+                  ? { draft: props.editing.draft, submitting: props.editing.submitting }
+                  : null
+              }
+              onStartEdit={props.onStartEdit}
+              onEditDraftChange={props.onEditDraftChange}
+              onCancelEdit={props.onCancelEdit}
+              onSubmitEdit={props.onSubmitEdit}
+            />
+          );
         }
         if (message.role === 'assistant') {
           return (
             <AssistantMessage
               key={key}
               message={message}
+              entryId={entryId}
               streaming={false}
+              forking={props.forkingEntryId === entryId}
+              actionsDisabled={props.actionsDisabled}
+              onFork={props.onFork}
               toolRuns={props.toolRuns}
               toolResults={toolResults}
             />

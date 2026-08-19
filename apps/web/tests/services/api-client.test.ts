@@ -60,6 +60,34 @@ describe('api 请求', () => {
     expect(vi.mocked(fetch).mock.calls[0]![0]).toBe('/api/sessions');
   });
 
+  it('分叉和编辑重发会编码会话及 Pi 条目标识', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(mockFetchResponse(201, { sessionId: 'forked' }))
+      .mockResolvedValueOnce(mockFetchResponse(200, { messages: [] }));
+
+    await api.forkSession('session/a', 'assistant/1');
+    await api.editAndResend('session/a', 'user/1', '修改后');
+
+    expect(vi.mocked(fetch).mock.calls).toEqual([
+      [
+        '/api/sessions/session%2Fa/forks',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ entryId: 'assistant/1' }),
+        },
+      ],
+      [
+        '/api/sessions/session%2Fa/messages/user%2F1/edit-resend',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: '修改后' }),
+        },
+      ],
+    ]);
+  });
+
   it('归档与删除使用按会话寻址的生命周期接口', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
 

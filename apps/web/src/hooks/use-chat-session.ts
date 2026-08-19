@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   CompactionReason,
   ModelReference,
+  SessionMessage,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -23,8 +24,6 @@ type AssistantUpdate = Extract<
 interface ChatError {
   /** 面向用户的错误说明 */
   message: string;
-  /** 是否可通过重发最后一条用户消息恢复 */
-  retryable: boolean;
 }
 
 /** 单次工具调用的实时状态。 */
@@ -61,7 +60,7 @@ export type SessionUnavailableReason = 'archived' | 'missing';
 
 /** 对话会话的完整客户端状态。 */
 export interface ChatSessionState {
-  messages: ChatMessage[];
+  messages: SessionMessage[];
   activeAssistant: AssistantChatMessage | null;
   toolRuns: Record<string, ToolRunState>;
   retries: RetryRecord[];
@@ -74,6 +73,10 @@ export interface ChatSessionState {
   settingThinkingLevel: boolean;
   settingModel: boolean;
   unavailableReason: SessionUnavailableReason | null;
+  /** 是否已经用当前 SSE 连接的权威快照校准页面 */
+  synchronized: boolean;
+  /** 断线超过一秒后是否显示重连提示 */
+  showReconnectNotice: boolean;
   error: ChatError | null;
 }
 
@@ -92,13 +95,14 @@ export const initialState: ChatSessionState = {
   settingThinkingLevel: false,
   settingModel: false,
   unavailableReason: null,
+  synchronized: false,
+  showReconnectNotice: false,
   error: null,
 };
 
 /** 会话状态机接受的动作。 */
 export type ChatSessionAction =
-  | { type: 'initialized'; messages: ChatMessage[]; session: AgentSessionState }
-  | { type: 'history_loaded'; messages: ChatMessage[] }
+  | { type: 'history_loaded'; messages: SessionMessage[] }
   | { type: 'pi_event'; event: AgentStreamEvent; receivedAt?: number }
   | { type: 'send_started' }
   | { type: 'send_finished' }
@@ -108,37 +112,32 @@ export type ChatSessionAction =
   | { type: 'thinking_level_finished'; session: AgentSessionState }
   | { type: 'model_started' }
   | { type: 'model_finished'; session: AgentSessionState }
-  | { type: 'unavailable'; reason: SessionUnavailableReason }
-  | { type: 'operation_failed'; message: string; retryable: boolean };
+  | { type: 'connection_lost' }
+  | { type: 'connection_notice' }
+  | { type: 'operation_failed'; message: string };
 
 /**
  * 把未知错误转换为统一的操作失败动作。
  *
  * @param error - 捕获到的未知错误
- * @param retryable - 是否允许重发最后一条消息
  * @returns 对话状态机可处理的失败动作
  */
-function operationFailedAction(error: unknown, retryable = false): ChatSessionAction {
+function operationFailedAction(error: unknown): ChatSessionAction {
   return {
     type: 'operation_failed',
     message: error instanceof Error ? error.message : String(error),
-    retryable,
   };
 }
 
 /**
- * 将 Pi 消息内容提取为可重发的纯文本。
+ * 将 Pi 用户消息内容提取为纯文本。
  *
  * @param message - Pi 结构化消息
- * @returns 消息中的所有文本块；没有文本时返回空字符串
+ * @returns 消息中的所有文本块；非用户消息或没有文本时返回空字符串
  */
 function getMessageText(message: ChatMessage): string {
-  if (message.role !== 'user') {
-    return '';
-  }
-  if (typeof message.content === 'string') {
-    return message.content;
-  }
+  if (message.role !== 'user') return '';
+  if (typeof message.content === 'string') return message.content;
   return message.content
     .filter(
       (content): content is Extract<(typeof message.content)[number], { type: 'text' }> =>
@@ -234,6 +233,58 @@ function updateLatestRetry(
 }
 
 /**
+ * 从快照中的最后一条助手消息恢复尚未取得结果的工具运行。
+ *
+ * @param messages - 当前分支完整历史
+ * @param activeAssistant - 当前仍在生成的助手消息
+ * @param isRunning - Agent 是否仍在运行
+ * @returns 可继续由实时工具事件更新的运行状态
+ */
+function getSnapshotToolRuns(
+  messages: SessionMessage[],
+  activeAssistant: AssistantChatMessage | null,
+  isRunning: boolean
+): Record<string, ToolRunState> {
+  if (!isRunning) return {};
+  const completedIds = new Set(
+    messages
+      .filter(
+        (item): item is SessionMessage & { message: ToolResultChatMessage } =>
+          item.message.role === 'toolResult'
+      )
+      .map((item) => item.message.toolCallId)
+  );
+  const assistant =
+    activeAssistant ??
+    [...messages]
+      .reverse()
+      .find(
+        (item): item is SessionMessage & { message: AssistantChatMessage } =>
+          item.message.role === 'assistant'
+      )?.message;
+  if (!assistant) return {};
+  return Object.fromEntries(
+    assistant.content
+      .filter(
+        (
+          content
+        ): content is Extract<AssistantChatMessage['content'][number], { type: 'toolCall' }> =>
+          content.type === 'toolCall' && !completedIds.has(content.id)
+      )
+      .map((content) => [
+        content.id,
+        {
+          toolCallId: content.id,
+          toolName: content.name,
+          args: content.arguments,
+          isError: false,
+          status: 'running' as const,
+        },
+      ])
+  );
+}
+
+/**
  * 把一条 Pi JSON 会话事件归并进客户端语义状态。
  *
  * 生命周期事件只驱动输入锁定等状态，不会被追加为消息行；消息、工具、重试和压缩事件
@@ -287,9 +338,18 @@ function reducePiEvent(
           status: event.message.isError ? 'error' : 'success',
         };
       }
+      const messageItem: SessionMessage = { entryId: null, message: event.message };
+      const lastMessage = state.messages.at(-1);
+      const replacesTransientUser =
+        event.message.role === 'user' &&
+        lastMessage?.entryId === null &&
+        lastMessage.message.role === 'user' &&
+        getMessageText(lastMessage.message) === getMessageText(event.message);
       return {
         ...state,
-        messages: [...state.messages, event.message],
+        messages: replacesTransientUser
+          ? [...state.messages.slice(0, -1), messageItem]
+          : [...state.messages, messageItem],
         activeAssistant: event.message.role === 'assistant' ? null : state.activeAssistant,
         toolRuns,
         compaction: event.message.role === 'compactionSummary' ? null : state.compaction,
@@ -422,12 +482,37 @@ function reducePiEvent(
         ? { ...state, session: { ...state.session, thinkingLevel: event.level } }
         : state;
     case 'session_model_changed':
-    case 'session_state':
       return {
         ...state,
         session: event.state,
         isRunning: event.state.isRunning,
       };
+    case 'session_snapshot':
+      return {
+        ...state,
+        messages: event.messages,
+        activeAssistant: event.activeAssistant,
+        toolRuns: getSnapshotToolRuns(
+          event.messages,
+          event.activeAssistant,
+          event.state.isRunning
+        ),
+        retries: [],
+        compaction: event.state.activeCompaction
+          ? { status: 'running', reason: event.state.activeCompaction.reason }
+          : null,
+        session: event.state,
+        isRunning: event.state.isRunning,
+        loading: false,
+        sending: false,
+        settingThinkingLevel: false,
+        settingModel: false,
+        unavailableReason: null,
+        synchronized: true,
+        showReconnectNotice: false,
+      };
+    case 'session_unavailable':
+      return unavailableState(state, event.reason);
     case 'session_info_changed':
       return state.session
         ? { ...state, session: { ...state.session, sessionName: event.name ?? null } }
@@ -436,6 +521,14 @@ function reducePiEvent(
       return state.session
         ? { ...state, session: { ...state.session, pendingMessages: event.pendingMessages } }
         : state;
+    case 'session_history_changed':
+      return {
+        ...state,
+        messages: event.messages,
+        toolRuns: {},
+        retries: [],
+        compaction: null,
+      };
     case 'session_archived':
       return unavailableState(state, 'archived');
     case 'session_deleted':
@@ -476,6 +569,8 @@ function unavailableState(
     settingThinkingLevel: false,
     settingModel: false,
     unavailableReason: reason,
+    synchronized: false,
+    showReconnectNotice: false,
     error: null,
   };
 }
@@ -489,26 +584,13 @@ function unavailableState(
  */
 export function chatReducer(state: ChatSessionState, action: ChatSessionAction): ChatSessionState {
   switch (action.type) {
-    case 'initialized':
-      return {
-        ...state,
-        messages: action.messages,
-        session: action.session,
-        isRunning: action.session.isRunning,
-        compaction: action.session.activeCompaction
-          ? { status: 'running', reason: action.session.activeCompaction.reason }
-          : null,
-        loading: false,
-        unavailableReason: null,
-        error: null,
-      };
     case 'history_loaded':
       return {
         ...state,
         messages: action.messages,
         compaction:
           state.compaction?.status === 'success' &&
-          action.messages.some((message) => message.role === 'compactionSummary')
+          action.messages.some(({ message }) => message.role === 'compactionSummary')
             ? null
             : state.compaction,
       };
@@ -540,8 +622,10 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         isRunning: action.session.isRunning,
         settingModel: false,
       };
-    case 'unavailable':
-      return unavailableState(state, action.reason);
+    case 'connection_lost':
+      return { ...state, synchronized: false };
+    case 'connection_notice':
+      return state.synchronized ? state : { ...state, showReconnectNotice: true };
     case 'operation_failed':
       return {
         ...state,
@@ -550,7 +634,7 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
         aborting: false,
         settingThinkingLevel: false,
         settingModel: false,
-        error: { message: action.message, retryable: action.retryable },
+        error: { message: action.message },
       };
   }
 }
@@ -564,13 +648,11 @@ export interface ChatSession {
    * @param text - 用户输入的纯文本
    * @returns Pi 接受提示后解决的 Promise
    */
-  send(text: string): Promise<void>;
-  /**
-   * 重发历史中的最后一条用户文本消息。
-   *
-   * @returns 无返回值
-   */
-  retry(): void;
+  send(text: string): Promise<boolean>;
+  /** @param entryId - 助手回复条目标识 @returns 新会话标识；失败时返回 null */
+  forkSession(entryId: string): Promise<string | null>;
+  /** @param entryId - 用户消息条目标识 @param text - 修改文本 @returns 是否被接受 */
+  editAndResend(entryId: string, text: string): Promise<boolean>;
   /**
    * 中止当前 Pi Agent 运行或上下文压缩。
    *
@@ -613,72 +695,79 @@ export function useChatSession(sessionId: string): ChatSession {
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
-    void (async () => {
-      try {
-        const [messages, session] = await Promise.all([
-          api.getMessages(sessionId),
-          api.getSessionState(sessionId),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        dispatch({ type: 'initialized', messages, session });
-        unsubscribe = subscribeEvents(
-          sessionId,
-          (event) => {
-            dispatch({ type: 'pi_event', event, receivedAt: Date.now() });
-            if (event.type === 'session_archived' || event.type === 'session_deleted') {
-              unsubscribe?.();
-            }
-            if (event.type === 'compaction_end' && event.result && !event.aborted) {
-              void api.getMessages(sessionId).then((history) => {
-                if (!cancelled) {
-                  dispatch({ type: 'history_loaded', messages: history });
-                }
-              });
-            }
-          },
-          (error) => {
-            dispatch(operationFailedAction(error));
+    let reconnectNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      unsubscribe = subscribeEvents(
+        sessionId,
+        (event) => {
+          if (event.type === 'session_snapshot' && reconnectNoticeTimer) {
+            clearTimeout(reconnectNoticeTimer);
+            reconnectNoticeTimer = null;
           }
-        );
-      } catch (error) {
-        if (!cancelled) {
-          const status = getErrorStatus(error);
-          if (status === 404 || status === 410) {
-            dispatch({
-              type: 'unavailable',
-              reason: status === 410 ? 'archived' : 'missing',
+          dispatch({ type: 'pi_event', event, receivedAt: Date.now() });
+          if (
+            event.type === 'session_archived' ||
+            event.type === 'session_deleted' ||
+            event.type === 'session_unavailable'
+          ) {
+            unsubscribe?.();
+          }
+          if (
+            event.type === 'agent_settled' ||
+            (event.type === 'compaction_end' && event.result && !event.aborted)
+          ) {
+            void api.getMessages(sessionId).then((history) => {
+              if (!cancelled) {
+                dispatch({ type: 'history_loaded', messages: history });
+              }
             });
-            return;
           }
-          dispatch(operationFailedAction(error));
-        }
-      }
-    })();
+        },
+        () => {
+          dispatch({ type: 'connection_lost' });
+          if (reconnectNoticeTimer) clearTimeout(reconnectNoticeTimer);
+          reconnectNoticeTimer = setTimeout(() => {
+            dispatch({ type: 'connection_notice' });
+          }, 1_000);
+        },
+        (error) => dispatch(operationFailedAction(error))
+      );
+    } catch (error) {
+      dispatch(operationFailedAction(error));
+    }
 
     return () => {
       cancelled = true;
+      if (reconnectNoticeTimer) clearTimeout(reconnectNoticeTimer);
       unsubscribe?.();
     };
   }, [sessionId]);
 
   const send = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string): Promise<boolean> => {
       if (
+        !state.synchronized ||
         state.sending ||
         state.compaction?.status === 'running' ||
         state.settingModel ||
         state.settingThinkingLevel
       ) {
-        return;
+        return false;
       }
       dispatch({ type: 'send_started' });
       try {
         await api.prompt(sessionId, text);
         dispatch({ type: 'send_finished' });
+        return true;
       } catch (error) {
-        dispatch(operationFailedAction(error, true));
+        dispatch(
+          operationFailedAction(
+            getErrorStatus(error) === null
+              ? new Error('发送结果未知，请检查会话后手动发送')
+              : error
+          )
+        );
+        return false;
       }
     },
     [
@@ -687,20 +776,37 @@ export function useChatSession(sessionId: string): ChatSession {
       state.sending,
       state.settingModel,
       state.settingThinkingLevel,
+      state.synchronized,
     ]
   );
 
-  const retry = useCallback((): void => {
-    const lastUserMessage = [...state.messages]
-      .reverse()
-      .find((message) => message.role === 'user');
-    if (lastUserMessage) {
-      const text = getMessageText(lastUserMessage);
-      if (text) {
-        void send(text);
+  const forkSession = useCallback(
+    async (entryId: string): Promise<string | null> => {
+      if (!state.synchronized) return null;
+      try {
+        return (await api.forkSession(sessionId, entryId)).sessionId;
+      } catch (error) {
+        dispatch(operationFailedAction(error));
+        return null;
       }
-    }
-  }, [send, state.messages]);
+    },
+    [sessionId, state.synchronized]
+  );
+
+  const editAndResend = useCallback(
+    async (entryId: string, text: string): Promise<boolean> => {
+      if (!state.synchronized) return false;
+      try {
+        const result = await api.editAndResend(sessionId, entryId, text);
+        dispatch({ type: 'history_loaded', messages: result.messages });
+        return true;
+      } catch (error) {
+        dispatch(operationFailedAction(error));
+        return false;
+      }
+    },
+    [sessionId, state.synchronized]
+  );
 
   const abort = useCallback(async (): Promise<string[]> => {
     if (!state.isRunning || state.aborting) {
@@ -719,46 +825,51 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const steerPendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
+      if (!state.synchronized) return;
       try {
         await api.steerPendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId]
+    [sessionId, state.synchronized]
   );
 
   const removePendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
+      if (!state.synchronized) return;
       try {
         await api.removePendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId]
+    [sessionId, state.synchronized]
   );
 
   const takePendingMessages = useCallback(async (): Promise<string[]> => {
+    if (!state.synchronized) return [];
     try {
       return (await api.takePendingMessages(sessionId)).texts;
     } catch (error) {
       dispatch(operationFailedAction(error));
       return [];
     }
-  }, [sessionId]);
+  }, [sessionId, state.synchronized]);
 
   const discardPendingMessages = useCallback(async (): Promise<void> => {
+    if (!state.synchronized) return;
     try {
       await api.discardPendingMessages(sessionId);
     } catch (error) {
       dispatch(operationFailedAction(error));
     }
-  }, [sessionId]);
+  }, [sessionId, state.synchronized]);
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
       if (
+        !state.synchronized ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||
@@ -780,12 +891,14 @@ export function useChatSession(sessionId: string): ChatSession {
       state.session?.thinkingLevel,
       state.settingModel,
       state.settingThinkingLevel,
+      state.synchronized,
     ]
   );
 
   const setModel = useCallback(
     async (model: ModelReference): Promise<void> => {
       if (
+        !state.synchronized ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||
@@ -801,13 +914,21 @@ export function useChatSession(sessionId: string): ChatSession {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId, state.isRunning, state.session, state.settingModel, state.settingThinkingLevel]
+    [
+      sessionId,
+      state.isRunning,
+      state.session,
+      state.settingModel,
+      state.settingThinkingLevel,
+      state.synchronized,
+    ]
   );
 
   return {
     state,
     send,
-    retry,
+    forkSession,
+    editAndResend,
     abort,
     steerPendingMessage,
     removePendingMessage,

@@ -11,6 +11,8 @@ import type {
   AvailableModel,
   ChatMessage,
   ModelReference,
+  SessionMessage,
+  SessionSnapshotEvent,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
@@ -19,6 +21,7 @@ import {
   AgentBusyError,
   AgentNotRunningError,
   ModelUnavailableError,
+  SessionEntryConflictError,
   type HubSession,
 } from './hub';
 import { toJsonAgentEvent } from './pi-json-event';
@@ -139,10 +142,65 @@ export class PiHubSession implements HubSession {
    *
    * @returns 当前分支中的完整结构化消息
    */
-  getMessages(): ChatMessage[] {
+  getMessages(): SessionMessage[] {
     return this.runtime.session.sessionManager
       .getBranch()
-      .flatMap((entry) => sessionEntryToContextMessages(entry));
+      .flatMap((entry) =>
+        sessionEntryToContextMessages(entry).map((message) => ({ entryId: entry.id, message }))
+      );
+  }
+
+  /**
+   * 在当前分支最后一条用户消息之前建立新分支并发送修改后的文本。
+   *
+   * @param entryId - 当前分支最后一条用户消息的条目标识
+   * @param text - 修改后的文本
+   * @returns 提示被接受后的当前分支历史
+   */
+  async editAndResend(entryId: string, text: string): Promise<SessionMessage[]> {
+    this.assertIdle();
+    const session = this.runtime.session;
+    const branch = session.sessionManager.getBranch();
+    const targetEntry = [...branch]
+      .reverse()
+      .find((entry) => entry.type === 'message' && entry.message.role === 'user');
+    if (targetEntry?.id !== entryId || targetEntry.type !== 'message') {
+      throw new SessionEntryConflictError('只能编辑当前分支最后一条用户消息');
+    }
+
+    const oldLeafId = session.sessionManager.getLeafId();
+    if (oldLeafId === entryId) {
+      if (targetEntry.parentId === null) {
+        session.sessionManager.resetLeaf();
+      } else {
+        session.sessionManager.branch(targetEntry.parentId);
+      }
+      session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+    } else {
+      await session.navigateTree(entryId);
+    }
+    const prefix = this.getMessages();
+    try {
+      await this.prompt(text);
+    } catch (error) {
+      if (oldLeafId === null) {
+        session.sessionManager.resetLeaf();
+      } else {
+        session.sessionManager.branch(oldLeafId);
+      }
+      session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+      throw error;
+    }
+
+    const messages: SessionMessage[] = [
+      ...prefix,
+      {
+        entryId: null,
+        message: { role: 'user', content: text, timestamp: Date.now() },
+      },
+    ];
+    this.emit({ type: 'session_history_changed', messages });
+    return messages;
   }
 
   /**
@@ -168,6 +226,22 @@ export class PiHubSession implements HubSession {
         .getAvailableSnapshot()
         .map((availableModel) => this.toAvailableModel(availableModel)),
       modelWarning: this.modelWarning,
+    };
+  }
+
+  /**
+   * 读取当前会话的历史、流式助手消息和运行状态快照。
+   *
+   * @returns 当前 Pi Runtime 的权威展示快照
+   */
+  getSnapshot(): SessionSnapshotEvent {
+    const streamingMessage = this.runtime.session.agent.state.streamingMessage;
+    return {
+      type: 'session_snapshot',
+      messages: this.getMessages(),
+      activeAssistant:
+        streamingMessage?.role === 'assistant' ? { ...streamingMessage } : null,
+      state: this.getState(),
     };
   }
 
@@ -336,12 +410,12 @@ export class PiHubSession implements HubSession {
     }
 
     const messages = this.getMessages();
-    const userMessage = messages.find((message) => message.role === 'user');
+    const userMessage = messages.find(({ message }) => message.role === 'user')?.message;
     const assistantMessage = messages.find(
-      (message): message is Extract<ChatMessage, { role: 'assistant' }> =>
-        message.role === 'assistant' && message.stopReason === 'stop'
-    );
-    if (!userMessage || !assistantMessage) {
+      (item): item is SessionMessage & { message: Extract<ChatMessage, { role: 'assistant' }> } =>
+        item.message.role === 'assistant' && item.message.stopReason === 'stop'
+    )?.message;
+    if (!userMessage || userMessage.role !== 'user' || !assistantMessage) {
       return;
     }
 

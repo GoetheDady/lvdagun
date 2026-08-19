@@ -5,12 +5,14 @@ import { sessionApiPaths, type AgentStreamEvent } from '@lvdagun/protocol';
  *
  * @param sessionId - 当前会话标识
  * @param onEvent - 事件回调
- * @param onError - 连接错误回调
+ * @param onDisconnect - 连接断开回调；浏览器随后会自动重连
+ * @param onError - 事件无法解析时的终态错误回调
  * @returns 退订函数
  */
 export function subscribeEvents(
   sessionId: string,
   onEvent: (event: AgentStreamEvent) => void,
+  onDisconnect?: () => void,
   onError?: (error: Error) => void
 ): () => void {
   const source = new EventSource(sessionApiPaths(sessionId).events);
@@ -22,13 +24,8 @@ export function subscribeEvents(
       onError?.(error instanceof Error ? error : new Error(String(error)));
     }
   };
-  source.onerror = (event) => {
-    source.close();
-    const error =
-      event instanceof ErrorEvent && event.error instanceof Error
-        ? event.error
-        : new Error('事件流连接失败', { cause: event });
-    onError?.(error);
+  source.onerror = () => {
+    onDisconnect?.();
   };
   return () => source.close();
 }

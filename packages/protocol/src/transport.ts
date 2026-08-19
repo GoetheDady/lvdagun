@@ -21,6 +21,8 @@ export const SESSION_API_PATHS = {
   state: `${API_PATHS.sessions}/:sessionId`,
   title: `${API_PATHS.sessions}/:sessionId/title`,
   messages: `${API_PATHS.sessions}/:sessionId/messages`,
+  forks: `${API_PATHS.sessions}/:sessionId/forks`,
+  editResend: `${API_PATHS.sessions}/:sessionId/messages/:entryId/edit-resend`,
   prompt: `${API_PATHS.sessions}/:sessionId/prompt`,
   abort: `${API_PATHS.sessions}/:sessionId/abort`,
   pendingMessages: `${API_PATHS.sessions}/:sessionId/pending-messages`,
@@ -43,6 +45,8 @@ export function sessionApiPaths(sessionId: string): {
   state: string;
   title: string;
   messages: string;
+  forks: string;
+  editResend: (entryId: string) => string;
   prompt: string;
   abort: string;
   pendingMessages: string;
@@ -59,6 +63,8 @@ export function sessionApiPaths(sessionId: string): {
     state: base,
     title: `${base}/title`,
     messages: `${base}/messages`,
+    forks: `${base}/forks`,
+    editResend: (entryId) => `${base}/messages/${encodeURIComponent(entryId)}/edit-resend`,
     prompt: `${base}/prompt`,
     abort: `${base}/abort`,
     pendingMessages: `${base}/pending-messages`,

@@ -3,7 +3,12 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentSessionState, AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
+import type {
+  AgentSessionState,
+  AgentStreamEvent,
+  ChatMessage,
+  SessionMessage,
+} from '@lvdagun/protocol';
 
 import ChatPage from '@/pages/chat-page';
 import { api } from '@/services/api-client';
@@ -11,6 +16,7 @@ import { api } from '@/services/api-client';
 const captured = vi.hoisted(() => ({
   onEvent: null as null | ((event: AgentStreamEvent) => void),
 }));
+const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('@/services/api-client', () => ({
   api: {
@@ -22,6 +28,8 @@ vi.mock('@/services/api-client', () => ({
     getMessages: vi.fn(),
     getSessionState: vi.fn(),
     prompt: vi.fn(),
+    forkSession: vi.fn(),
+    editAndResend: vi.fn(),
     abortSession: vi.fn(),
     steerPendingMessage: vi.fn(),
     removePendingMessage: vi.fn(),
@@ -33,12 +41,43 @@ vi.mock('@/services/api-client', () => ({
 }));
 
 vi.mock('@/services/event-stream', () => ({
-  subscribeEvents: vi.fn((_sessionId: string, onEvent: (event: AgentStreamEvent) => void) => {
-    captured.onEvent = onEvent;
-    return () => {
-      captured.onEvent = null;
-    };
-  }),
+  subscribeEvents: vi.fn(
+    (
+      sessionId: string,
+      onEvent: (event: AgentStreamEvent) => void,
+      _onDisconnect?: () => void,
+      onError?: (error: Error) => void
+    ) => {
+      captured.onEvent = onEvent;
+      queueMicrotask(() => {
+        void import('@/services/api-client').then(async ({ api: mockedApi }) => {
+          try {
+            const [messages, state] = await Promise.all([
+              mockedApi.getMessages(sessionId),
+              mockedApi.getSessionState(sessionId),
+            ]);
+            onEvent({ type: 'session_snapshot', messages, activeAssistant: null, state });
+          } catch (error) {
+            const status =
+              typeof error === 'object' && error !== null && 'status' in error
+                ? error.status
+                : null;
+            if (status === 404 || status === 410) {
+              onEvent({
+                type: 'session_unavailable',
+                reason: status === 410 ? 'archived' : 'missing',
+              });
+              return;
+            }
+            onError?.(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+      });
+      return () => {
+        captured.onEvent = null;
+      };
+    }
+  ),
 }));
 
 const sessionState: AgentSessionState = {
@@ -84,6 +123,11 @@ const assistantMessage: ChatMessage = {
   timestamp: 2,
 };
 
+/** @param message - Pi 消息 @param entryId - Pi 条目标识 @returns 展示历史项 */
+function historyItem(message: ChatMessage, entryId: string | null): SessionMessage {
+  return { entryId, message };
+}
+
 /** @returns 页面渲染结果 */
 function renderChatPage(): ReturnType<typeof render> {
   return render(
@@ -97,6 +141,10 @@ function renderChatPage(): ReturnType<typeof render> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: clipboardWriteText },
+  });
   captured.onEvent = null;
   vi.mocked(api.listSessions).mockResolvedValue([
     {
@@ -115,6 +163,8 @@ beforeEach(() => {
   vi.mocked(api.getMessages).mockResolvedValue([]);
   vi.mocked(api.getSessionState).mockResolvedValue(sessionState);
   vi.mocked(api.prompt).mockResolvedValue(undefined);
+  vi.mocked(api.forkSession).mockResolvedValue({ sessionId: 'session-fork' });
+  vi.mocked(api.editAndResend).mockResolvedValue({ messages: [] });
   vi.mocked(api.abortSession).mockResolvedValue({ restoredTexts: [] });
   vi.mocked(api.steerPendingMessage).mockResolvedValue(undefined);
   vi.mocked(api.removePendingMessage).mockResolvedValue(undefined);
@@ -136,21 +186,134 @@ describe('ChatPage', () => {
 
   it('渲染侧边栏、结构化历史和 Markdown 文本', async () => {
     vi.mocked(api.getMessages).mockResolvedValue([
-      { role: 'user', content: '你好', timestamp: 1 },
-      assistantMessage,
+      historyItem({ role: 'user', content: '你好', timestamp: 1 }, 'entry-user'),
+      historyItem(assistantMessage, 'entry-assistant'),
     ]);
     renderChatPage();
     expect(await screen.findByRole('navigation', { name: '会话列表' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '你好' })).toBeInTheDocument();
     expect(await screen.findByText('你好呀')).toBeInTheDocument();
-    expect(screen.getByText(/anthropic \/ claude-a/)).toBeInTheDocument();
+    expect(screen.queryByText(/anthropic \/ claude-a/)).not.toBeInTheDocument();
+  });
+
+  it('通过悬停工具条复制用户消息和助手可见文本', async () => {
+    vi.mocked(api.getMessages).mockResolvedValue([
+      historyItem({ role: 'user', content: '复制用户消息', timestamp: 1 }, 'entry-user'),
+      historyItem(
+        {
+          ...assistantMessage,
+          content: [
+            { type: 'thinking', thinking: '不要复制思考' },
+            { type: 'text', text: '复制助手文本' },
+          ],
+        },
+        'entry-assistant'
+      ),
+    ]);
+    renderChatPage();
+
+    const copyButtons = await screen.findAllByRole('button', { name: '复制消息' });
+    expect(copyButtons).toHaveLength(2);
+    expect(copyButtons[0]?.parentElement).toHaveClass(
+      'mt-1',
+      'opacity-0',
+      'group-hover:opacity-100'
+    );
+    expect(copyButtons[1]?.parentElement).toHaveClass('opacity-0', 'group-hover:opacity-100');
+    const editableToolbar = screen.getByRole('button', { name: '编辑并重发' }).parentElement;
+    expect(editableToolbar?.querySelectorAll('button')[0]).toHaveAccessibleName('编辑并重发');
+    expect(editableToolbar?.querySelectorAll('button')[1]).toHaveAccessibleName('复制消息');
+
+    await userEvent.click(copyButtons[0]!);
+    await userEvent.click(copyButtons[1]!);
+
+    expect(clipboardWriteText).toHaveBeenNthCalledWith(1, '复制用户消息');
+    expect(clipboardWriteText).toHaveBeenNthCalledWith(2, '复制助手文本');
+  });
+
+  it('只原位编辑最后一条用户消息，取消前保留下方历史和底部草稿', async () => {
+    vi.mocked(api.getMessages).mockResolvedValue([
+      historyItem({ role: 'user', content: '第一问', timestamp: 1 }, 'user-1'),
+      historyItem(assistantMessage, 'assistant-1'),
+      historyItem({ role: 'user', content: '第二问', timestamp: 3 }, 'user-2'),
+      historyItem(
+        { ...assistantMessage, content: [{ type: 'text', text: '第二答' }], timestamp: 4 },
+        'assistant-2'
+      ),
+    ]);
+    renderChatPage();
+    const composer = await screen.findByRole('group', { name: '消息输入区' });
+    const composerInput = within(composer).getByPlaceholderText('输入消息');
+    await userEvent.type(composerInput, '底部草稿');
+
+    expect(screen.getAllByRole('button', { name: '编辑并重发' })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: '编辑并重发' }));
+
+    expect(screen.getByRole('textbox', { name: '编辑用户消息' })).toHaveValue('第二问');
+    expect(screen.getByText('第二答')).toBeInTheDocument();
+    expect(composerInput).toHaveValue('底部草稿');
+    expect(composerInput).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: '取消编辑' }));
+    expect(screen.queryByRole('textbox', { name: '编辑用户消息' })).not.toBeInTheDocument();
+    expect(composerInput).toBeEnabled();
+    expect(composerInput).toHaveValue('底部草稿');
+  });
+
+  it('编辑重发被接受后切换当前分支，失败时保留原位草稿', async () => {
+    const originalHistory = [
+      historyItem({ role: 'user', content: '原问题', timestamp: 1 }, 'user-1'),
+      historyItem(assistantMessage, 'assistant-1'),
+    ];
+    vi.mocked(api.getMessages).mockResolvedValue(originalHistory);
+    vi.mocked(api.editAndResend)
+      .mockRejectedValueOnce(new Error('暂时失败'))
+      .mockResolvedValueOnce({
+        messages: [historyItem({ role: 'user', content: '新问题', timestamp: 3 }, null)],
+      });
+    renderChatPage();
+    await userEvent.click(await screen.findByRole('button', { name: '编辑并重发' }));
+    const editor = screen.getByRole('textbox', { name: '编辑用户消息' });
+    await userEvent.clear(editor);
+    await userEvent.type(editor, '新问题');
+    await userEvent.click(screen.getByRole('button', { name: '发送编辑后的消息' }));
+
+    await waitFor(() => expect(api.editAndResend).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('textbox', { name: '编辑用户消息' })).toHaveValue('新问题');
+    expect(screen.getByText('你好呀')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '发送编辑后的消息' }));
+    await waitFor(() => expect(api.editAndResend).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: '编辑用户消息' })).not.toBeInTheDocument()
+    );
+    expect(screen.queryByText('你好呀')).not.toBeInTheDocument();
+    expect(screen.getAllByText('新问题')).toHaveLength(2);
+  });
+
+  it('可从已完成助手回复分叉并导航，源会话运行时仍保留分叉入口', async () => {
+    vi.mocked(api.getMessages).mockResolvedValue([
+      historyItem({ role: 'user', content: '问题', timestamp: 1 }, 'user-1'),
+      historyItem(assistantMessage, 'assistant/1'),
+    ]);
+    vi.mocked(api.getSessionState).mockResolvedValue({ ...sessionState, isRunning: true });
+    renderChatPage();
+
+    expect(screen.queryByRole('button', { name: '编辑并重发' })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: '分叉为新会话' }));
+
+    expect(api.forkSession).toHaveBeenCalledWith('session-a', 'assistant/1');
+    await waitFor(() => expect(api.getMessages).toHaveBeenCalledWith('session-fork'));
   });
 
   it('把历史压缩摘要渲染为有名称的会话分隔线', async () => {
     vi.mocked(api.getMessages).mockResolvedValue([
-      { role: 'user', content: '压缩前', timestamp: 1 },
-      { role: 'compactionSummary', summary: '此前对话摘要', tokensBefore: 100, timestamp: 2 },
-      { role: 'user', content: '压缩后', timestamp: 3 },
+      historyItem({ role: 'user', content: '压缩前', timestamp: 1 }, 'entry-user-1'),
+      historyItem(
+        { role: 'compactionSummary', summary: '此前对话摘要', tokensBefore: 100, timestamp: 2 },
+        'entry-summary'
+      ),
+      historyItem({ role: 'user', content: '压缩后', timestamp: 3 }, 'entry-user-2'),
     ]);
     renderChatPage();
 
@@ -185,6 +348,19 @@ describe('ChatPage', () => {
     renderChatPage();
     await userEvent.click(await screen.findByRole('button', { name: '总结今天的重要新闻' }));
     expect(screen.getByPlaceholderText('输入消息')).toHaveValue('总结今天的重要新闻');
+  });
+
+  it('发送结果未知时把原消息恢复到草稿且不提供自动重发', async () => {
+    vi.mocked(api.prompt).mockRejectedValueOnce(new Error('连接中断'));
+    renderChatPage();
+    const input = await screen.findByPlaceholderText('输入消息');
+    await userEvent.type(input, '不要重复发送');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('发送结果未知，请检查会话后手动发送')).toBeInTheDocument();
+    expect(input).toHaveValue('不要重复发送');
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
+    expect(api.prompt).toHaveBeenCalledOnce();
   });
 
   it('在统一输入区搜索并切换会话模型且保留草稿', async () => {

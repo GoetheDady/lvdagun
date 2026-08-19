@@ -31,8 +31,7 @@ export function registerConfigRoutes(
       res.status(400).json({ error: '配置不合法' });
       return;
     }
-    await configStore.save(config);
-    await sessionManager.invalidate();
+    await sessionManager.updateConfig(config);
     res.status(204).end();
   });
 }

@@ -4,13 +4,15 @@ import {
   sessionApiPaths,
   type AbortSessionResult,
   type AgentSessionState,
-  type ChatMessage,
   type CreateSessionResult,
+  type EditResendResult,
+  type ForkSessionResult,
   type ModelConfig,
   type ModelInfo,
   type ModelReference,
   type ProviderInfo,
   type SessionSummary,
+  type SessionMessage,
   type TakePendingMessagesResult,
   type TestConnectionResult,
   type ThinkingLevel,
@@ -94,8 +96,22 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
 
-  getMessages: (sessionId: string): Promise<ChatMessage[]> =>
+  getMessages: (sessionId: string): Promise<SessionMessage[]> =>
     request(sessionApiPaths(sessionId).messages),
+
+  forkSession: (sessionId: string, entryId: string): Promise<ForkSessionResult> =>
+    request(sessionApiPaths(sessionId).forks, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ entryId }),
+    }),
+
+  editAndResend: (sessionId: string, entryId: string, text: string): Promise<EditResendResult> =>
+    request(sessionApiPaths(sessionId).editResend(entryId), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }),
 
   getSessionState: (sessionId: string): Promise<AgentSessionState> =>
     request(sessionApiPaths(sessionId).state),

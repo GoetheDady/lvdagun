@@ -1,11 +1,12 @@
 import type {
   AgentSessionState,
   AgentStreamEvent,
-  ChatMessage,
   ModelReference,
   ModelConfig,
   ModelInfo,
   ProviderInfo,
+  SessionMessage,
+  SessionSnapshotEvent,
   TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -77,6 +78,17 @@ export class ModelUnavailableError extends Error {
   }
 }
 
+/** 会话历史已经变化，请求的条目不再适用于当前操作 */
+export class SessionEntryConflictError extends Error {
+  readonly status = 409;
+
+  /** @param message - 面向用户的冲突说明 */
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionEntryConflictError';
+  }
+}
+
 /** 本地服务与 Pi Agent 会话之间的能力契约 */
 export interface HubSession {
   /** Pi 持久化会话的不透明标识 */
@@ -119,7 +131,16 @@ export interface HubSession {
    *
    * @returns 消息历史副本
    */
-  getMessages(): ChatMessage[];
+  getMessages(): SessionMessage[];
+
+  /**
+   * 编辑当前分支最后一条用户消息并重新开始 Agent 运行。
+   *
+   * @param entryId - 最后一条用户消息的 Pi 条目标识
+   * @param text - 修改后的非空文本
+   * @returns 提示被接受后的当前分支历史
+   */
+  editAndResend(entryId: string, text: string): Promise<SessionMessage[]>;
 
   /**
    * 读取当前 Agent 运行与思考等级状态。
@@ -127,6 +148,13 @@ export interface HubSession {
    * @returns 当前会话状态
    */
   getState(): AgentSessionState;
+
+  /**
+   * 读取当前会话的历史、流式助手消息和运行状态快照。
+   *
+   * @returns 建立订阅时的权威会话快照
+   */
+  getSnapshot(): SessionSnapshotEvent;
 
   /**
    * 设置 Pi 持久化会话标题。
@@ -229,6 +257,22 @@ export interface Hub {
    * @throws 会话不存在、模型不存在或初始化失败
    */
   openSession(config: ModelConfig, sessionId: string): Promise<HubSession>;
+
+  /**
+   * 从源会话指定助手回复创建独立持久化会话。
+   *
+   * @param config - 当前全局模型配置
+   * @param sourceSessionId - 源会话标识
+   * @param entryId - 要保留到的助手回复条目标识
+   * @param title - 派生会话标题
+   * @returns 独立的 Hub 会话
+   */
+  forkSession(
+    config: ModelConfig,
+    sourceSessionId: string,
+    entryId: string,
+    title: string
+  ): Promise<HubSession>;
 
   /**
    * 保留 Pi 会话文件并将会话移出普通会话列表。

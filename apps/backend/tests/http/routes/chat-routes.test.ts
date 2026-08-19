@@ -125,6 +125,44 @@ describe('对话接口', () => {
     }
   });
 
+  it('分叉为独立会话并原子编辑重发最后一条用户消息', async () => {
+    const { hub, sessions } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    try {
+      await fetch(`${baseUrl}/api/sessions/session-1/prompt`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '原问题' }),
+      });
+      sessions[0]!.simulateAssistant('原回答');
+
+      const fork = await fetch(`${baseUrl}/api/sessions/session-1/forks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ entryId: 'entry-2' }),
+      });
+      expect(fork.status).toBe(201);
+      await expect(fork.json()).resolves.toMatchObject({ sessionId: expect.any(String) });
+
+      const edit = await fetch(`${baseUrl}/api/sessions/session-1/messages/entry-1/edit-resend`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '新问题' }),
+      });
+      expect(edit.status).toBe(200);
+      await expect(edit.json()).resolves.toMatchObject({
+        messages: [{ entryId: 'entry-1', message: { role: 'user', content: '新问题' } }],
+      });
+      expect(
+        sessions.find((session) => session.id === 'session-1')!.editAndResend
+      ).toHaveBeenCalledWith('entry-1', '新问题');
+    } finally {
+      await close();
+    }
+  });
+
   it('支持逐条调整方向、删除以及整队取回和丢弃', async () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));

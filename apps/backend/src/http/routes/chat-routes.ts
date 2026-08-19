@@ -5,6 +5,8 @@ import {
   SESSION_API_PATHS,
   type CreateSessionResult,
   type AbortSessionResult,
+  type EditResendResult,
+  type ForkSessionResult,
   type ModelReference,
   type ThinkingLevel,
   type TakePendingMessagesResult,
@@ -41,6 +43,34 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
 
   app.get(SESSION_API_PATHS.messages, async (req, res) => {
     res.json(await sessionManager.getMessages(req.params.sessionId!));
+  });
+
+  app.post(SESSION_API_PATHS.forks, async (req, res) => {
+    const { entryId } = req.body as { entryId?: unknown };
+    if (typeof entryId !== 'string' || entryId === '') {
+      res.status(400).json({ error: '消息标识不能为空' });
+      return;
+    }
+    const result: ForkSessionResult = {
+      sessionId: await sessionManager.forkSession(req.params.sessionId!, entryId),
+    };
+    res.status(201).json(result);
+  });
+
+  app.post(SESSION_API_PATHS.editResend, async (req, res) => {
+    const { text } = req.body as { text?: unknown };
+    if (typeof text !== 'string' || text.trim() === '') {
+      res.status(400).json({ error: '消息不能为空' });
+      return;
+    }
+    const result: EditResendResult = {
+      messages: await sessionManager.editAndResend(
+        req.params.sessionId!,
+        req.params.entryId!,
+        text
+      ),
+    };
+    res.json(result);
   });
 
   app.get(SESSION_API_PATHS.state, async (req, res) => {

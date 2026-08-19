@@ -1,11 +1,13 @@
 /**
- * @file 持久化会话注册表:按 id 懒加载 Pi Runtime、转发事件并约束全局 Agent 运行。
+ * @file 持久化会话注册表:按 id 懒加载 Pi Runtime、转发事件并协调并行 Agent 运行。
  */
 import type {
   AgentSessionState,
   AgentStreamEvent,
-  ChatMessage,
+  ModelConfig,
   ModelReference,
+  SessionMessage,
+  SessionSnapshotEvent,
   SessionSummary,
   ThinkingLevel,
 } from '@lvdagun/protocol';
@@ -29,6 +31,15 @@ interface SessionRecord {
   createdAt: number;
   listeners: Set<(event: AgentStreamEvent) => void>;
   unsubscribe: () => void;
+  promptAdmission: Promise<unknown> | null;
+}
+
+/** 事件订阅及建立订阅时的原子会话快照。 */
+export interface SessionSubscription {
+  /** 退订事件流 */
+  unsubscribe: () => void;
+  /** 订阅建立时读取的权威快照 */
+  snapshot: SessionSnapshotEvent;
 }
 
 /** 持久化会话注册表接口 */
@@ -39,6 +50,9 @@ export interface SessionManager {
   /** @returns 新建持久化会话的不透明标识 */
   createSession(): Promise<string>;
 
+  /** @param sourceSessionId - 源会话 @param entryId - 助手回复条目 @returns 派生会话标识 */
+  forkSession(sourceSessionId: string, entryId: string): Promise<string>;
+
   /** @param sessionId - 会话标识 @returns 归档完成后的 Promise */
   archiveSession(sessionId: string): Promise<void>;
 
@@ -46,7 +60,7 @@ export interface SessionManager {
   deleteSession(sessionId: string): Promise<void>;
 
   /** @param sessionId - 会话标识 @returns 结构化消息历史 */
-  getMessages(sessionId: string): Promise<ChatMessage[]>;
+  getMessages(sessionId: string): Promise<SessionMessage[]>;
 
   /** @param sessionId - 会话标识 @returns Agent 运行与思考等级状态 */
   getState(sessionId: string): Promise<AgentSessionState>;
@@ -55,13 +69,23 @@ export interface SessionManager {
   setSessionName(sessionId: string, title: string): Promise<void>;
 
   /**
-   * 在全局没有其他 Agent 运行时接受提示。
+   * 接受提示；同一会话已有运行时进入待处理区，不同会话可以并行。
    *
    * @param sessionId - 会话标识
    * @param text - 用户提示
    * @returns Pi 接受提示后解决的 Promise
    */
   prompt(sessionId: string, text: string): Promise<void>;
+
+  /**
+   * 编辑当前分支最后一条用户消息并重新发送。
+   *
+   * @param sessionId - 会话标识
+   * @param entryId - 最后一条用户消息的 Pi 条目标识
+   * @param text - 修改后的文本
+   * @returns 提示被接受后的当前分支历史
+   */
+  editAndResend(sessionId: string, entryId: string, text: string): Promise<SessionMessage[]>;
 
   /** @param sessionId - 会话标识 @param messageId - 消息标识 @returns 调整方向完成后的 Promise */
   steerPendingMessage(sessionId: string, messageId: string): Promise<void>;
@@ -94,23 +118,29 @@ export interface SessionManager {
   setModel(sessionId: string, model: ModelReference): Promise<AgentSessionState>;
 
   /**
-   * 订阅指定会话事件;注册后首先投递一份权威会话状态。
+   * 订阅指定会话事件，并返回与订阅建立时原子对应的权威快照。
    *
    * @param sessionId - 会话标识
    * @param listener - 事件监听器
-   * @returns 退订函数
+   * @returns 事件退订函数和建立订阅时的权威快照
    */
-  subscribe(sessionId: string, listener: (event: AgentStreamEvent) => void): Promise<() => void>;
+  subscribe(
+    sessionId: string,
+    listener: (event: AgentStreamEvent) => void
+  ): Promise<SessionSubscription>;
 
-  /** @returns 配置变更后释放全部已加载 Runtime */
-  invalidate(): Promise<void>;
+  /** @param config - 新模型配置 @returns 保存配置并释放旧 Runtime 后解决的 Promise */
+  updateConfig(config: ModelConfig): Promise<void>;
+
+  /** @returns 停止全部运行并释放所有 Runtime 后解决的 Promise */
+  dispose(): Promise<void>;
 }
 
 /**
  * 创建持久化会话注册表。
  *
  * 每个 session id 在进程内至多对应一个 Runtime，避免 Pi JSONL 被多个实例并发写入。
- * 当前并行策略尚未纳入产品范围，因此保留单 Agent 全局运行约束。
+ * 同一会话的提示前置校验串行执行，不同会话的 Runtime 可以并行运行。
  *
  * @param hub - Hub 能力
  * @param configStore - 模型配置存取
@@ -119,7 +149,8 @@ export interface SessionManager {
 export function createSessionManager(hub: Hub, configStore: ConfigStore): SessionManager {
   const records = new Map<string, Promise<SessionRecord>>();
   const lifecycleSessionIds = new Set<string>();
-  let runningSessionId: string | null = null;
+  let configurationChanging = false;
+  let disposed = false;
 
   /** @returns 当前有效配置 */
   const loadConfig = async () => {
@@ -144,11 +175,9 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       createdAt,
       listeners,
       unsubscribe: () => {},
+      promptAdmission: null,
     };
     record.unsubscribe = session.subscribe((event) => {
-      if (event.type === 'agent_settled' && runningSessionId === session.id) {
-        runningSessionId = null;
-      }
       for (const listener of listeners) {
         listener(event);
       }
@@ -160,7 +189,6 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
   async function disposeAll(): Promise<void> {
     const pending = [...records.values()];
     records.clear();
-    runningSessionId = null;
     const loaded = await Promise.allSettled(pending);
     await Promise.all(
       loaded.flatMap((result) => {
@@ -180,13 +208,16 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
    * @returns 会话注册记录
    */
   const getRecord = async (sessionId: string): Promise<SessionRecord> => {
+    if (configurationChanging || disposed) {
+      throw new AgentBusyError();
+    }
     if (lifecycleSessionIds.has(sessionId)) {
       throw new AgentBusyError();
     }
     const existing = records.get(sessionId);
     if (existing) {
       const record = await existing;
-      if (lifecycleSessionIds.has(sessionId)) {
+      if (lifecycleSessionIds.has(sessionId) || configurationChanging || disposed) {
         throw new AgentBusyError();
       }
       return record;
@@ -201,7 +232,7 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     records.set(sessionId, loading);
     try {
       const record = await loading;
-      if (lifecycleSessionIds.has(sessionId)) {
+      if (lifecycleSessionIds.has(sessionId) || configurationChanging || disposed) {
         throw new AgentBusyError();
       }
       return record;
@@ -233,7 +264,7 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     try {
       const pendingRecord = records.get(sessionId);
       const record = pendingRecord ? await pendingRecord.catch(() => null) : null;
-      if (record?.session.getState().isRunning) {
+      if (record?.promptAdmission !== null || record?.session.getState().isRunning) {
         throw new AgentBusyError();
       }
 
@@ -242,9 +273,6 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
         await record.session.dispose();
       }
       records.delete(sessionId);
-      if (runningSessionId === sessionId) {
-        runningSessionId = null;
-      }
 
       await mutate();
       if (record) {
@@ -277,7 +305,10 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
         summaries.set(session.id, {
           ...metadata,
           title: name?.trim() || fallbackTitle || '新对话',
-          isRunning: record?.session.getState().isRunning ?? false,
+          isRunning:
+            record === undefined
+              ? false
+              : record.promptAdmission !== null || record.session.getState().isRunning,
         });
       }
 
@@ -285,7 +316,29 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     },
 
     async createSession(): Promise<string> {
+      if (configurationChanging || disposed) throw new AgentBusyError();
       const session = await hub.createSession(await loadConfig());
+      const record = register(session);
+      records.set(session.id, Promise.resolve(record));
+      return session.id;
+    },
+
+    async forkSession(sourceSessionId: string, entryId: string): Promise<string> {
+      const sourceRecord = await getRecord(sourceSessionId);
+      const stored = (await hub.listSessions()).find((session) => session.id === sourceSessionId);
+      const fallbackTitle =
+        stored?.firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : stored?.firstMessage.trim();
+      const sourceTitle =
+        sourceRecord.session.getState().sessionName?.trim() ||
+        stored?.name?.trim() ||
+        fallbackTitle ||
+        '新对话';
+      const session = await hub.forkSession(
+        await loadConfig(),
+        sourceSessionId,
+        entryId,
+        `${sourceTitle}（分叉）`
+      );
       const record = register(session);
       records.set(session.id, Promise.resolve(record));
       return session.id;
@@ -303,7 +356,7 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
       );
     },
 
-    async getMessages(sessionId: string): Promise<ChatMessage[]> {
+    async getMessages(sessionId: string): Promise<SessionMessage[]> {
       return (await getRecord(sessionId)).session.getMessages();
     },
 
@@ -312,30 +365,55 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     },
 
     async setSessionName(sessionId: string, title: string): Promise<void> {
-      (await getRecord(sessionId)).session.setSessionName(title);
+      const record = await getRecord(sessionId);
+      if (record.promptAdmission !== null) throw new AgentBusyError();
+      record.session.setSessionName(title);
     },
 
     async prompt(sessionId: string, text: string): Promise<void> {
       const record = await getRecord(sessionId);
-      const state = record.session.getState();
-      if (runningSessionId !== null && runningSessionId !== sessionId) {
+      while (record.promptAdmission !== null) {
+        await record.promptAdmission.catch(() => undefined);
+      }
+      if (configurationChanging || disposed || lifecycleSessionIds.has(sessionId)) {
         throw new AgentBusyError();
       }
+      const state = record.session.getState();
       if (state.activeCompaction !== null) {
         throw new AgentBusyError();
       }
-      if (runningSessionId === sessionId || state.isRunning) {
+      if (state.isRunning) {
         record.session.enqueuePendingMessage(text);
         return;
       }
-      runningSessionId = sessionId;
+      const admission = record.session.prompt(text);
+      record.promptAdmission = admission;
       try {
-        await record.session.prompt(text);
-      } catch (error) {
-        if (!record.session.getState().isRunning) {
-          runningSessionId = null;
-        }
-        throw error;
+        await admission;
+      } finally {
+        if (record.promptAdmission === admission) record.promptAdmission = null;
+      }
+    },
+
+    async editAndResend(
+      sessionId: string,
+      entryId: string,
+      text: string
+    ): Promise<SessionMessage[]> {
+      const record = await getRecord(sessionId);
+      while (record.promptAdmission !== null) {
+        await record.promptAdmission.catch(() => undefined);
+      }
+      if (configurationChanging || disposed || lifecycleSessionIds.has(sessionId)) {
+        throw new AgentBusyError();
+      }
+      if (record.session.getState().isRunning) throw new AgentBusyError();
+      const admission = record.session.editAndResend(entryId, text);
+      record.promptAdmission = admission;
+      try {
+        return await admission;
+      } finally {
+        if (record.promptAdmission === admission) record.promptAdmission = null;
       }
     },
 
@@ -356,25 +434,61 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
     },
 
     async setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> {
-      return (await getRecord(sessionId)).session.setThinkingLevel(level);
+      const record = await getRecord(sessionId);
+      if (record.promptAdmission !== null) throw new AgentBusyError();
+      return record.session.setThinkingLevel(level);
     },
 
     async setModel(sessionId: string, model: ModelReference): Promise<AgentSessionState> {
-      return (await getRecord(sessionId)).session.setModel(model);
+      const record = await getRecord(sessionId);
+      if (record.promptAdmission !== null) throw new AgentBusyError();
+      return record.session.setModel(model);
     },
 
     async subscribe(
       sessionId: string,
       listener: (event: AgentStreamEvent) => void
-    ): Promise<() => void> {
+    ): Promise<SessionSubscription> {
       const record = await getRecord(sessionId);
       record.listeners.add(listener);
-      listener({ type: 'session_state', state: record.session.getState() });
-      return () => record.listeners.delete(listener);
+      return {
+        unsubscribe: () => record.listeners.delete(listener),
+        snapshot: record.session.getSnapshot(),
+      };
     },
 
-    async invalidate(): Promise<void> {
-      await disposeAll();
+    async updateConfig(config: ModelConfig): Promise<void> {
+      if (configurationChanging || disposed) throw new AgentBusyError();
+      configurationChanging = true;
+      try {
+        const loaded = await Promise.all(
+          [...records.values()].map(async (recordPromise) => recordPromise.catch(() => null))
+        );
+        if (
+          loaded.some(
+            (record) =>
+              record !== null &&
+              (record.promptAdmission !== null || record.session.getState().isRunning)
+          )
+        ) {
+          throw new AgentBusyError();
+        }
+        await configStore.save(config);
+        await disposeAll();
+      } finally {
+        configurationChanging = false;
+      }
+    },
+
+    async dispose(): Promise<void> {
+      if (disposed) return;
+      configurationChanging = true;
+      try {
+        await disposeAll();
+        disposed = true;
+      } finally {
+        configurationChanging = false;
+      }
     },
   };
 }

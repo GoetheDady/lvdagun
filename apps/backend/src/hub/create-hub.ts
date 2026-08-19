@@ -23,7 +23,13 @@ import type {
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import { SessionArchivedError, SessionNotFoundError, type Hub, type HubSession } from './hub';
+import {
+  SessionArchivedError,
+  SessionEntryConflictError,
+  SessionNotFoundError,
+  type Hub,
+  type HubSession,
+} from './hub';
 import { PiHubSession } from './pi-hub-session';
 import { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
 
@@ -291,6 +297,27 @@ export function createHub(options: { dataDir: string }): Hub {
     async openSession(config, sessionId) {
       const stored = await findAvailableSession(sessionId);
       return createHubSession(config, PiSessionManager.open(stored.path, sessionDir));
+    },
+
+    async forkSession(config, sourceSessionId, entryId, title) {
+      const stored = await findAvailableSession(sourceSessionId);
+      // 使用独立的 SessionManager 提取路径，避免 createBranchedSession 改写源 Runtime 的身份。
+      const sourceManager = PiSessionManager.open(stored.path, sessionDir);
+      const selectedEntry = sourceManager.getEntry(entryId);
+      if (
+        selectedEntry?.type !== 'message' ||
+        selectedEntry.message.role !== 'assistant' ||
+        selectedEntry.message.stopReason === 'pending'
+      ) {
+        throw new SessionEntryConflictError('只能从已完成的助手回复分叉为新会话');
+      }
+      const forkedPath = sourceManager.createBranchedSession(entryId);
+      if (!forkedPath) {
+        throw new Error('Pi 未能创建派生会话文件');
+      }
+      const forkedManager = PiSessionManager.open(forkedPath, sessionDir);
+      forkedManager.appendSessionInfo(title);
+      return createHubSession(config, forkedManager);
     },
 
     async archiveSession(sessionId) {
