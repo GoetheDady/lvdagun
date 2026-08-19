@@ -89,8 +89,8 @@ export class SessionEntryConflictError extends Error {
   }
 }
 
-/** 本地服务与 Pi Agent 会话之间的能力契约 */
-export interface HubSession {
+/** Agent Hub 内部使用的单会话适配器接口。 */
+export interface AgentSessionAdapter {
   /** Pi 持久化会话的不透明标识 */
   readonly id: string;
 
@@ -206,8 +206,8 @@ interface StoredSessionSummary {
   messageCount: number;
 }
 
-/** Agent Hub 对本地服务提供的能力 */
-export interface Hub {
+/** Agent Hub 内部依赖的持久化与 Pi Runtime 适配器接口。 */
+export interface AgentHubAdapter {
   /**
    * 列出可配置的模型服务商。
    *
@@ -246,7 +246,7 @@ export interface Hub {
    * @returns 就绪的 Hub 会话
    * @throws 模型不存在或初始化失败
    */
-  createSession(config: ModelConfig): Promise<HubSession>;
+  createSession(config: ModelConfig): Promise<AgentSessionAdapter>;
 
   /**
    * 按不透明标识打开一个已有持久化会话。
@@ -256,7 +256,7 @@ export interface Hub {
    * @returns 就绪的 Hub 会话
    * @throws 会话不存在、模型不存在或初始化失败
    */
-  openSession(config: ModelConfig, sessionId: string): Promise<HubSession>;
+  openSession(config: ModelConfig, sessionId: string): Promise<AgentSessionAdapter>;
 
   /**
    * 从源会话指定助手回复创建独立持久化会话。
@@ -272,7 +272,7 @@ export interface Hub {
     sourceSessionId: string,
     entryId: string,
     title: string
-  ): Promise<HubSession>;
+  ): Promise<AgentSessionAdapter>;
 
   /**
    * 保留 Pi 会话文件并将会话移出普通会话列表。

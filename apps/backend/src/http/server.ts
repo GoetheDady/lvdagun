@@ -3,14 +3,9 @@ import { join } from 'node:path';
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 
-import type { ConfigStore } from '../config/config-store';
-import { AgentBusyError } from '../hub/hub';
-import type { Hub } from '../hub/hub';
-import {
-  NotConfiguredError,
-  createSessionManager,
-  type SessionManager,
-} from '../sessions/session-manager';
+import type { AgentHub } from '../hub/agent-hub';
+import { AgentBusyError } from '../hub/agent-hub-adapter';
+import { NotConfiguredError } from '../hub/agent-hub';
 import { registerCatalogRoutes } from './routes/catalog-routes';
 import { registerChatRoutes } from './routes/chat-routes';
 import { registerConfigRoutes } from './routes/config-routes';
@@ -18,10 +13,7 @@ import { registerEventRoutes } from './routes/event-routes';
 
 /** 装配本地服务所需的依赖 */
 export interface ServerDeps {
-  configStore: ConfigStore;
-  hub: Hub;
-  /** CLI 需要持有同一实例以便退出时释放全部 Runtime。 */
-  sessionManager?: SessionManager;
+  agentHub: AgentHub;
   /** 生产环境客户端构建产物目录；开发环境不提供 */
   webDist?: string;
 }
@@ -36,12 +28,10 @@ export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   app.use(express.json());
 
-  const sessionManager = deps.sessionManager ?? createSessionManager(deps.hub, deps.configStore);
-
-  registerConfigRoutes(app, deps.configStore, sessionManager);
-  registerCatalogRoutes(app, deps.hub);
-  registerChatRoutes(app, sessionManager);
-  registerEventRoutes(app, sessionManager);
+  registerConfigRoutes(app, deps.agentHub);
+  registerCatalogRoutes(app, deps.agentHub);
+  registerChatRoutes(app, deps.agentHub);
+  registerEventRoutes(app, deps.agentHub);
 
   if (deps.webDist) {
     app.use(express.static(deps.webDist));

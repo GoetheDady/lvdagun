@@ -1,5 +1,5 @@
 /**
- * @file Pi SDK 的 Agent Hub 适配器。
+ * @file Agent Hub 使用的 Pi SDK 适配器。
  *
  * 本模块是本地服务中唯一创建 Pi 运行时和会话的地方。
  */
@@ -27,10 +27,11 @@ import {
   SessionArchivedError,
   SessionEntryConflictError,
   SessionNotFoundError,
-  type Hub,
-  type HubSession,
-} from './hub';
-import { PiHubSession } from './pi-hub-session';
+  type AgentHubAdapter,
+  type AgentSessionAdapter,
+} from './agent-hub-adapter';
+import { PiAgentSessionAdapter } from './pi-agent-session-adapter';
+import { createAutoSessionTitleExtension } from '../extensions/auto-session-title/auto-session-title-extension';
 import { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
 
 const INFRA_PROVIDERS = new Set([
@@ -50,7 +51,7 @@ const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
  * @param options.dataDir - Pi 缓存、自定义模型和 Agent 资源使用的数据目录
  * @returns Agent Hub 实例
  */
-export function createHub(options: { dataDir: string }): Hub {
+export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubAdapter {
   const { dataDir } = options;
   const cwd = homedir();
   const sessionDir = join(dataDir, 'sessions');
@@ -79,9 +80,9 @@ export function createHub(options: { dataDir: string }): Hub {
    * @returns Hub 会话适配器
    */
   const createHubSession = async (
-    config: Parameters<Hub['createSession']>[0],
+    config: Parameters<AgentHubAdapter['createSession']>[0],
     piSessionManager: PiSessionManager
-  ): Promise<HubSession> => {
+  ): Promise<AgentSessionAdapter> => {
     const pendingMessages = new PendingMessageController();
     const runtime = await getRuntime();
     if (config.apiKey) {
@@ -133,6 +134,7 @@ export function createHub(options: { dataDir: string }): Hub {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           noExtensions: true,
           extensionFactories: [
+            createAutoSessionTitleExtension(runtime),
             {
               name: 'lvdagun-pending-messages',
               hidden: true,
@@ -169,7 +171,7 @@ export function createHub(options: { dataDir: string }): Hub {
       sessionManager: piSessionManager,
     });
 
-    return new PiHubSession(agentRuntime, pendingMessages, modelWarning);
+    return new PiAgentSessionAdapter(agentRuntime, pendingMessages, modelWarning);
   };
 
   /**

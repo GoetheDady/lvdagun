@@ -10,7 +10,9 @@ import { PendingMessages } from '@/components/chat/pending-messages';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { type SessionUnavailableReason, useChatSession } from '@/hooks/use-chat-session';
+import { useChatSession } from '@/hooks/use-chat-session';
+import { selectEditableUserEntryId, selectSessionTitle } from '@/state/chat-session-selectors';
+import type { SessionUnavailableReason } from '@/state/chat-session-state';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 
 /** 空会话中可直接填入输入框的示例提示。 */
@@ -172,23 +174,9 @@ function ChatWorkspace({
     state.activeAssistant !== null ||
     state.retries.length > 0 ||
     state.compaction !== null;
-  const firstUserMessage = state.messages.find(({ message }) => message.role === 'user')?.message;
-  const firstUserText =
-    firstUserMessage?.role === 'user'
-      ? typeof firstUserMessage.content === 'string'
-        ? firstUserMessage.content
-        : firstUserMessage.content
-            .filter((content) => content.type === 'text')
-            .map((content) => content.text)
-            .join('\n')
-      : '';
   const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
-  const sessionTitle =
-    state.session?.sessionName?.trim() || firstUserText.trim() || sidebarTitle || '新对话';
-  const editableUserEntryId = state.isRunning || !state.synchronized
-    ? null
-    : ([...state.messages].reverse().find(({ message }) => message.role === 'user')?.entryId ??
-      null);
+  const sessionTitle = selectSessionTitle(state, sidebarTitle);
+  const editableUserEntryId = selectEditableUserEntryId(state);
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
@@ -284,10 +272,10 @@ function ChatWorkspace({
             {state.showReconnectNotice
               ? '正在重新连接'
               : state.compaction?.status === 'running'
-              ? '压缩中'
-              : state.isRunning
-                ? '运行中'
-                : '就绪'}
+                ? '压缩中'
+                : state.isRunning
+                  ? '运行中'
+                  : '就绪'}
           </p>
         </div>
       </header>

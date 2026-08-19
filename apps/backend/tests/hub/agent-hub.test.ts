@@ -18,8 +18,12 @@ import type {
 } from '@lvdagun/protocol';
 
 import { FileConfigStore } from '../../src/config/config-store';
-import { AgentBusyError, type Hub, type HubSession } from '../../src/hub/hub';
-import { createSessionManager, NotConfiguredError } from '../../src/sessions/session-manager';
+import {
+  AgentBusyError,
+  type AgentHubAdapter,
+  type AgentSessionAdapter,
+} from '../../src/hub/agent-hub-adapter';
+import { createAgentHub, NotConfiguredError } from '../../src/hub/agent-hub';
 
 const availableModels: AvailableModel[] = [
   {
@@ -32,7 +36,7 @@ const availableModels: AvailableModel[] = [
 ];
 
 /** 按 id 模拟一个可控的持久化 Hub 会话。 */
-class FakeSession implements HubSession {
+class FakeSession implements AgentSessionAdapter {
   readonly createdAt = Date.now();
   readonly messages: ChatMessage[] = [];
   readonly listeners = new Set<(event: AgentStreamEvent) => void>();
@@ -163,7 +167,7 @@ class FakeSession implements HubSession {
 }
 
 /** @returns 可控 Hub 与按 id 保存的测试会话 */
-function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
+function makeFakeHub(): { hub: AgentHubAdapter; sessions: Map<string, FakeSession> } {
   const sessions = new Map<string, FakeSession>();
   const stored = [
     {
@@ -190,7 +194,7 @@ function makeFakeHub(): { hub: Hub; sessions: Map<string, FakeSession> } {
     },
   ];
   let nextId = 1;
-  const hub: Hub = {
+  const hub: AgentHubAdapter = {
     listProviders: vi.fn(async () => []),
     listModels: vi.fn(async () => []),
     testConnection: vi.fn(async () => ({ ok: true }) as const),
@@ -238,21 +242,21 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('createSessionManager', () => {
+describe('createAgentHub', () => {
   it('未配置时拒绝创建或打开会话', async () => {
     const { hub } = makeFakeHub();
-    const manager = createSessionManager(hub, new FileConfigStore(join(dir, 'config.json')));
-    await expect(manager.createSession()).rejects.toBeInstanceOf(NotConfiguredError);
-    await expect(manager.getState('saved-a')).rejects.toBeInstanceOf(NotConfiguredError);
+    const agentHub = createAgentHub(hub, new FileConfigStore(join(dir, 'config.json')));
+    await expect(agentHub.createSession()).rejects.toBeInstanceOf(NotConfiguredError);
+    await expect(agentHub.getState('saved-a')).rejects.toBeInstanceOf(NotConfiguredError);
   });
 
   it('列出全部持久化会话并按 id 复用唯一 Runtime', async () => {
     const { hub } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
 
-    await expect(manager.listSessions()).resolves.toEqual([
+    await expect(agentHub.listSessions()).resolves.toEqual([
       {
         id: 'saved-a',
         title: '持久化标题',
@@ -278,8 +282,8 @@ describe('createSessionManager', () => {
         isRunning: false,
       },
     ]);
-    await manager.getState('saved-a');
-    await manager.getState('saved-a');
+    await agentHub.getState('saved-a');
+    await agentHub.getState('saved-a');
     expect(hub.openSession).toHaveBeenCalledTimes(1);
   });
 
@@ -287,10 +291,10 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
-    const sessionId = await manager.createSession();
+    const agentHub = createAgentHub(hub, store);
+    const sessionId = await agentHub.createSession();
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
-    const subscription = await manager.subscribe(sessionId, listener);
+    const subscription = await agentHub.subscribe(sessionId, listener);
 
     expect(subscription.snapshot).toEqual({
       type: 'session_snapshot',
@@ -300,7 +304,7 @@ describe('createSessionManager', () => {
     });
     sessions.get(sessionId)!.emit({ type: 'agent_start' });
     expect(listener).toHaveBeenCalledWith({ type: 'agent_start' });
-    expect((await manager.listSessions())[0]).toMatchObject({ id: sessionId, isRunning: false });
+    expect((await agentHub.listSessions())[0]).toMatchObject({ id: sessionId, isRunning: false });
     subscription.unsubscribe();
   });
 
@@ -308,11 +312,11 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
-    await manager.subscribe('saved-a', listener);
+    await agentHub.subscribe('saved-a', listener);
 
-    await manager.setSessionName('saved-a', '手动设置的标题');
+    await agentHub.setSessionName('saved-a', '手动设置的标题');
 
     expect(sessions.get('saved-a')!.getState().sessionName).toBe('手动设置的标题');
     expect(listener).toHaveBeenLastCalledWith({
@@ -325,15 +329,15 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
 
-    await manager.prompt('saved-a', '任务 A');
-    await manager.prompt('saved-a', '排队消息');
+    await agentHub.prompt('saved-a', '任务 A');
+    await agentHub.prompt('saved-a', '排队消息');
     expect(sessions.get('saved-a')!.pendingMessages).toEqual([
       { id: 'pending-1', text: '排队消息' },
     ]);
     expect(sessions.get('saved-a')!.prompt).toHaveBeenCalledTimes(1);
-    await expect(manager.prompt('saved-b', '任务 B')).resolves.toBeUndefined();
+    await expect(agentHub.prompt('saved-b', '任务 B')).resolves.toBeUndefined();
     expect(sessions.get('saved-b')!.prompt).toHaveBeenCalledWith('任务 B');
   });
 
@@ -341,8 +345,8 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
-    await manager.getState('saved-a');
+    const agentHub = createAgentHub(hub, store);
+    await agentHub.getState('saved-a');
     const session = sessions.get('saved-a')!;
     let acceptFirst!: () => void;
     session.prompt.mockImplementationOnce(
@@ -355,9 +359,9 @@ describe('createSessionManager', () => {
         })
     );
 
-    const first = manager.prompt('saved-a', '第一条');
+    const first = agentHub.prompt('saved-a', '第一条');
     await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1));
-    const second = manager.prompt('saved-a', '第二条');
+    const second = agentHub.prompt('saved-a', '第二条');
     expect(session.pendingMessages).toEqual([]);
 
     acceptFirst();
@@ -371,9 +375,9 @@ describe('createSessionManager', () => {
     const { hub } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
 
-    const forkedId = await manager.forkSession('saved-a', 'entry-assistant');
+    const forkedId = await agentHub.forkSession('saved-a', 'entry-assistant');
 
     expect(hub.forkSession).toHaveBeenCalledWith(
       config,
@@ -382,7 +386,7 @@ describe('createSessionManager', () => {
       '持久化标题（分叉）'
     );
     expect(forkedId).toMatch(/^new-/);
-    await manager.getState(forkedId);
+    await agentHub.getState(forkedId);
     expect(hub.openSession).not.toHaveBeenCalledWith(config, forkedId);
   });
 
@@ -390,11 +394,11 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
-    await manager.getState('saved-a');
-    await manager.getState('saved-b');
+    const agentHub = createAgentHub(hub, store);
+    await agentHub.getState('saved-a');
+    await agentHub.getState('saved-b');
 
-    await manager.updateConfig({ ...config, modelId: 'claude-b' });
+    await agentHub.updateConfig({ ...config, modelId: 'claude-b' });
     expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
     expect(sessions.get('saved-b')!.dispose).toHaveBeenCalledTimes(1);
   });
@@ -403,11 +407,11 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
-    await manager.subscribe('saved-a', listener);
+    await agentHub.subscribe('saved-a', listener);
 
-    await manager.archiveSession('saved-a');
+    await agentHub.archiveSession('saved-a');
 
     expect(hub.archiveSession).toHaveBeenCalledWith('saved-a');
     expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
@@ -421,11 +425,11 @@ describe('createSessionManager', () => {
     const { hub, sessions } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
+    const agentHub = createAgentHub(hub, store);
     const listener = vi.fn<(event: AgentStreamEvent) => void>();
-    await manager.subscribe('saved-a', listener);
+    await agentHub.subscribe('saved-a', listener);
 
-    await manager.deleteSession('saved-a');
+    await agentHub.deleteSession('saved-a');
 
     expect(hub.deleteSession).toHaveBeenCalledWith('saved-a');
     expect(sessions.get('saved-a')!.dispose).toHaveBeenCalledTimes(1);
@@ -439,11 +443,11 @@ describe('createSessionManager', () => {
     const { hub } = makeFakeHub();
     const store = new FileConfigStore(join(dir, 'config.json'));
     await store.save(config);
-    const manager = createSessionManager(hub, store);
-    await manager.prompt('saved-a', '任务 A');
+    const agentHub = createAgentHub(hub, store);
+    await agentHub.prompt('saved-a', '任务 A');
 
-    await expect(manager.archiveSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
-    await expect(manager.deleteSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
+    await expect(agentHub.archiveSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
+    await expect(agentHub.deleteSession('saved-a')).rejects.toBeInstanceOf(AgentBusyError);
     expect(hub.archiveSession).not.toHaveBeenCalled();
     expect(hub.deleteSession).not.toHaveBeenCalled();
   });

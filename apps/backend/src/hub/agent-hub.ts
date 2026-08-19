@@ -1,19 +1,28 @@
 /**
- * @file 持久化会话注册表:按 id 懒加载 Pi Runtime、转发事件并协调并行 Agent 运行。
+ * @file Agent Hub:统一提供模型目录、配置和持久化会话能力。
  */
-import type {
-  AgentSessionState,
-  AgentStreamEvent,
-  ModelConfig,
-  ModelReference,
-  SessionMessage,
-  SessionSnapshotEvent,
-  SessionSummary,
-  ThinkingLevel,
+import {
+  createForkSessionTitle,
+  resolveSessionTitle,
+  type AgentSessionState,
+  type AgentStreamEvent,
+  type ModelConfig,
+  type ModelInfo,
+  type ModelReference,
+  type ProviderInfo,
+  type SessionMessage,
+  type SessionSnapshotEvent,
+  type SessionSummary,
+  type ThinkingLevel,
+  type TestConnectionResult,
 } from '@lvdagun/protocol';
 
 import type { ConfigStore } from '../config/config-store';
-import { AgentBusyError, type Hub, type HubSession } from '../hub/hub';
+import {
+  AgentBusyError,
+  type AgentHubAdapter,
+  type AgentSessionAdapter,
+} from './agent-hub-adapter';
 
 const PI_EMPTY_SESSION_MESSAGE = '(no messages)';
 
@@ -27,8 +36,7 @@ export class NotConfiguredError extends Error {
 }
 
 interface SessionRecord {
-  session: HubSession;
-  createdAt: number;
+  session: AgentSessionAdapter;
   listeners: Set<(event: AgentStreamEvent) => void>;
   unsubscribe: () => void;
   promptAdmission: Promise<unknown> | null;
@@ -42,8 +50,20 @@ export interface SessionSubscription {
   snapshot: SessionSnapshotEvent;
 }
 
-/** 持久化会话注册表接口 */
-export interface SessionManager {
+/** 本地服务使用的 Agent Hub 接口。 */
+export interface AgentHub {
+  /** @returns 当前模型配置；尚未配置时返回 null */
+  getConfig(): Promise<ModelConfig | null>;
+
+  /** @returns 可配置的 Provider 列表 */
+  listProviders(): Promise<ProviderInfo[]>;
+
+  /** @param providerId - Provider 标识 @returns 该 Provider 的模型列表 */
+  listModels(providerId: string): Promise<ModelInfo[]>;
+
+  /** @param providerId - Provider 标识 @param apiKey - 待验证凭据 @returns 连接结果 */
+  testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult>;
+
   /** @returns 按最后更新时间倒序排列的全部会话 */
   listSessions(): Promise<SessionSummary[]>;
 
@@ -137,16 +157,16 @@ export interface SessionManager {
 }
 
 /**
- * 创建持久化会话注册表。
+ * 创建 Agent Hub。
  *
  * 每个 session id 在进程内至多对应一个 Runtime，避免 Pi JSONL 被多个实例并发写入。
  * 同一会话的提示前置校验串行执行，不同会话的 Runtime 可以并行运行。
  *
- * @param hub - Hub 能力
+ * @param hubAdapter - Pi 持久化和 Runtime 能力适配器
  * @param configStore - 模型配置存取
  * @returns 会话管理操作集
  */
-export function createSessionManager(hub: Hub, configStore: ConfigStore): SessionManager {
+export function createAgentHub(hubAdapter: AgentHubAdapter, configStore: ConfigStore): AgentHub {
   const records = new Map<string, Promise<SessionRecord>>();
   const lifecycleSessionIds = new Set<string>();
   let configurationChanging = false;
@@ -165,14 +185,12 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
    * 注册一个 Runtime，并把 Pi 事件投影给该会话的所有 SSE 订阅者。
    *
    * @param session - Hub 会话
-   * @param createdAt - 持久化摘要中的创建时间
    * @returns 注册记录
    */
-  const register = (session: HubSession, createdAt = session.createdAt): SessionRecord => {
+  const register = (session: AgentSessionAdapter): SessionRecord => {
     const listeners = new Set<(event: AgentStreamEvent) => void>();
     const record: SessionRecord = {
       session,
-      createdAt,
       listeners,
       unsubscribe: () => {},
       promptAdmission: null,
@@ -225,9 +243,8 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     const loading = (async (): Promise<SessionRecord> => {
       const config = await loadConfig();
-      const stored = (await hub.listSessions()).find((session) => session.id === sessionId);
-      const session = await hub.openSession(config, sessionId);
-      return register(session, stored?.createdAt);
+      const session = await hubAdapter.openSession(config, sessionId);
+      return register(session);
     })();
     records.set(sessionId, loading);
     try {
@@ -286,8 +303,13 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
   };
 
   return {
+    getConfig: () => configStore.load(),
+    listProviders: () => hubAdapter.listProviders(),
+    listModels: (providerId) => hubAdapter.listModels(providerId),
+    testConnection: (providerId, apiKey) => hubAdapter.testConnection(providerId, apiKey),
+
     async listSessions(): Promise<SessionSummary[]> {
-      const stored = await hub.listSessions();
+      const stored = await hubAdapter.listSessions();
       const loaded = await Promise.all(
         [...records.values()].map(async (recordPromise) => recordPromise.catch(() => null))
       );
@@ -296,28 +318,26 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
           .filter((record): record is SessionRecord => record !== null)
           .map((record) => [record.session.id, record])
       );
-      const summaries = new Map<string, SessionSummary>();
-
-      for (const session of stored) {
+      const summaries = stored.map((session): SessionSummary => {
         const record = loadedById.get(session.id);
         const { name, firstMessage, ...metadata } = session;
-        const fallbackTitle = firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : firstMessage.trim();
-        summaries.set(session.id, {
+        const firstUserMessage = firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : firstMessage;
+        return {
           ...metadata,
-          title: name?.trim() || fallbackTitle || '新对话',
+          title: resolveSessionTitle({ sessionName: name, firstUserMessage }),
           isRunning:
             record === undefined
               ? false
               : record.promptAdmission !== null || record.session.getState().isRunning,
-        });
-      }
+        };
+      });
 
-      return [...summaries.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+      return summaries.sort((left, right) => right.updatedAt - left.updatedAt);
     },
 
     async createSession(): Promise<string> {
       if (configurationChanging || disposed) throw new AgentBusyError();
-      const session = await hub.createSession(await loadConfig());
+      const session = await hubAdapter.createSession(await loadConfig());
       const record = register(session);
       records.set(session.id, Promise.resolve(record));
       return session.id;
@@ -325,19 +345,20 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     async forkSession(sourceSessionId: string, entryId: string): Promise<string> {
       const sourceRecord = await getRecord(sourceSessionId);
-      const stored = (await hub.listSessions()).find((session) => session.id === sourceSessionId);
-      const fallbackTitle =
-        stored?.firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : stored?.firstMessage.trim();
-      const sourceTitle =
-        sourceRecord.session.getState().sessionName?.trim() ||
-        stored?.name?.trim() ||
-        fallbackTitle ||
-        '新对话';
-      const session = await hub.forkSession(
+      const stored = (await hubAdapter.listSessions()).find(
+        (session) => session.id === sourceSessionId
+      );
+      const firstUserMessage =
+        stored?.firstMessage === PI_EMPTY_SESSION_MESSAGE ? '' : stored?.firstMessage;
+      const sourceTitle = resolveSessionTitle({
+        sessionName: sourceRecord.session.getState().sessionName ?? stored?.name,
+        firstUserMessage,
+      });
+      const session = await hubAdapter.forkSession(
         await loadConfig(),
         sourceSessionId,
         entryId,
-        `${sourceTitle}（分叉）`
+        createForkSessionTitle(sourceTitle)
       );
       const record = register(session);
       records.set(session.id, Promise.resolve(record));
@@ -346,13 +367,13 @@ export function createSessionManager(hub: Hub, configStore: ConfigStore): Sessio
 
     async archiveSession(sessionId: string): Promise<void> {
       await changeLifecycle(sessionId, { type: 'session_archived', sessionId }, async () =>
-        hub.archiveSession(sessionId)
+        hubAdapter.archiveSession(sessionId)
       );
     },
 
     async deleteSession(sessionId: string): Promise<void> {
       await changeLifecycle(sessionId, { type: 'session_deleted', sessionId }, async () =>
-        hub.deleteSession(sessionId)
+        hubAdapter.deleteSession(sessionId)
       );
     },
 

@@ -2,17 +2,17 @@ import type { Express, NextFunction } from 'express';
 
 import { SESSION_API_PATHS, type AgentStreamEvent } from '@lvdagun/protocol';
 
-import type { SessionManager } from '../../sessions/session-manager';
-import { SessionArchivedError, SessionNotFoundError } from '../../hub/hub';
+import type { AgentHub } from '../../hub/agent-hub';
+import { SessionArchivedError, SessionNotFoundError } from '../../hub/agent-hub-adapter';
 
 /**
  * 注册 SSE 事件流接口。
  *
  * @param app - Express 应用
- * @param sessionManager - 按 id 管理 Runtime 和事件订阅的会话注册表
+ * @param agentHub - 按 id 管理 Runtime、快照和事件订阅的 Agent Hub
  * @returns 无返回值
  */
-export function registerEventRoutes(app: Express, sessionManager: SessionManager): void {
+export function registerEventRoutes(app: Express, agentHub: AgentHub): void {
   app.get(SESSION_API_PATHS.events, async (req, res, next: NextFunction) => {
     // 先订阅再取快照；订阅建立后产生的事件会暂存，确保快照与实时流之间没有缺口。
     const pending: AgentStreamEvent[] = [];
@@ -28,7 +28,7 @@ export function registerEventRoutes(app: Express, sessionManager: SessionManager
     });
 
     try {
-      const subscription = await sessionManager.subscribe(req.params.sessionId!, (event) => {
+      const subscription = await agentHub.subscribe(req.params.sessionId!, (event) => {
         if (!ready) {
           pending.push(event);
           return;

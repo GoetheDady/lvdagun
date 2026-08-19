@@ -12,37 +12,37 @@ import {
   type TakePendingMessagesResult,
 } from '@lvdagun/protocol';
 
-import type { SessionManager } from '../../sessions/session-manager';
+import type { AgentHub } from '../../hub/agent-hub';
 
 /**
  * 注册对话消息与 Pi 会话控制接口。
  *
  * @param app - Express 应用
- * @param sessionManager - 会话管理器
+ * @param agentHub - Agent Hub
  * @returns 无返回值
  */
-export function registerChatRoutes(app: Express, sessionManager: SessionManager): void {
+export function registerChatRoutes(app: Express, agentHub: AgentHub): void {
   app.get(API_PATHS.sessions, async (_req, res) => {
-    res.json(await sessionManager.listSessions());
+    res.json(await agentHub.listSessions());
   });
 
   app.post(API_PATHS.sessions, async (_req, res) => {
-    const result: CreateSessionResult = { sessionId: await sessionManager.createSession() };
+    const result: CreateSessionResult = { sessionId: await agentHub.createSession() };
     res.status(201).json(result);
   });
 
   app.post(SESSION_API_PATHS.archive, async (req, res) => {
-    await sessionManager.archiveSession(req.params.sessionId!);
+    await agentHub.archiveSession(req.params.sessionId!);
     res.status(204).end();
   });
 
   app.delete(SESSION_API_PATHS.state, async (req, res) => {
-    await sessionManager.deleteSession(req.params.sessionId!);
+    await agentHub.deleteSession(req.params.sessionId!);
     res.status(204).end();
   });
 
   app.get(SESSION_API_PATHS.messages, async (req, res) => {
-    res.json(await sessionManager.getMessages(req.params.sessionId!));
+    res.json(await agentHub.getMessages(req.params.sessionId!));
   });
 
   app.post(SESSION_API_PATHS.forks, async (req, res) => {
@@ -52,7 +52,7 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       return;
     }
     const result: ForkSessionResult = {
-      sessionId: await sessionManager.forkSession(req.params.sessionId!, entryId),
+      sessionId: await agentHub.forkSession(req.params.sessionId!, entryId),
     };
     res.status(201).json(result);
   });
@@ -64,17 +64,13 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       return;
     }
     const result: EditResendResult = {
-      messages: await sessionManager.editAndResend(
-        req.params.sessionId!,
-        req.params.entryId!,
-        text
-      ),
+      messages: await agentHub.editAndResend(req.params.sessionId!, req.params.entryId!, text),
     };
     res.json(result);
   });
 
   app.get(SESSION_API_PATHS.state, async (req, res) => {
-    res.json(await sessionManager.getState(req.params.sessionId!));
+    res.json(await agentHub.getState(req.params.sessionId!));
   });
 
   app.put(SESSION_API_PATHS.title, async (req, res) => {
@@ -83,7 +79,7 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       res.status(400).json({ error: '标题不能为空' });
       return;
     }
-    await sessionManager.setSessionName(req.params.sessionId!, title.trim());
+    await agentHub.setSessionName(req.params.sessionId!, title.trim());
     res.status(204).end();
   });
 
@@ -93,43 +89,43 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       res.status(400).json({ error: '消息不能为空' });
       return;
     }
-    await sessionManager.prompt(req.params.sessionId!, text);
+    await agentHub.prompt(req.params.sessionId!, text);
     res.status(202).end();
   });
 
   app.post(SESSION_API_PATHS.abort, async (req, res) => {
     const result: AbortSessionResult = {
-      restoredTexts: await sessionManager.abort(req.params.sessionId!),
+      restoredTexts: await agentHub.abort(req.params.sessionId!),
     };
     res.json(result);
   });
 
   app.post(SESSION_API_PATHS.pendingMessageSteer, async (req, res) => {
-    await sessionManager.steerPendingMessage(req.params.sessionId!, req.params.messageId!);
+    await agentHub.steerPendingMessage(req.params.sessionId!, req.params.messageId!);
     res.status(204).end();
   });
 
   app.delete(SESSION_API_PATHS.pendingMessage, async (req, res) => {
-    await sessionManager.removePendingMessage(req.params.sessionId!, req.params.messageId!);
+    await agentHub.removePendingMessage(req.params.sessionId!, req.params.messageId!);
     res.status(204).end();
   });
 
   app.post(SESSION_API_PATHS.pendingMessagesTake, async (req, res) => {
     const result: TakePendingMessagesResult = {
-      texts: await sessionManager.takePendingMessages(req.params.sessionId!),
+      texts: await agentHub.takePendingMessages(req.params.sessionId!),
     };
     res.json(result);
   });
 
   app.delete(SESSION_API_PATHS.pendingMessages, async (req, res) => {
-    await sessionManager.takePendingMessages(req.params.sessionId!);
+    await agentHub.takePendingMessages(req.params.sessionId!);
     res.status(204).end();
   });
 
   app.put(SESSION_API_PATHS.thinkingLevel, async (req, res) => {
     const { level } = req.body as { level?: unknown };
     const sessionId = req.params.sessionId!;
-    const state = await sessionManager.getState(sessionId);
+    const state = await agentHub.getState(sessionId);
     if (
       typeof level !== 'string' ||
       !state.availableThinkingLevels.includes(level as ThinkingLevel)
@@ -137,7 +133,7 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       res.status(400).json({ error: '当前模型不支持该思考等级' });
       return;
     }
-    res.json(await sessionManager.setThinkingLevel(sessionId, level as ThinkingLevel));
+    res.json(await agentHub.setThinkingLevel(sessionId, level as ThinkingLevel));
   });
 
   app.put(SESSION_API_PATHS.model, async (req, res) => {
@@ -147,6 +143,6 @@ export function registerChatRoutes(app: Express, sessionManager: SessionManager)
       return;
     }
     const model: ModelReference = { provider, id };
-    res.json(await sessionManager.setModel(req.params.sessionId!, model));
+    res.json(await agentHub.setModel(req.params.sessionId!, model));
   });
 }

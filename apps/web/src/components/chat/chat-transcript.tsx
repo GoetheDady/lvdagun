@@ -26,7 +26,8 @@ import type {
   RetryRecord,
   ToolResultChatMessage,
   ToolRunState,
-} from '@/hooks/use-chat-session';
+} from '@/state/chat-session-state';
+import { indexToolResults, selectPairedToolCallIds } from '@/state/chat-session-selectors';
 
 type UserChatMessage = Extract<ChatMessage, { role: 'user' }>;
 
@@ -437,7 +438,7 @@ function AssistantMessage(props: {
               className="size-7"
               title="分叉为新会话"
               aria-label="分叉为新会话"
-            disabled={props.forking || props.actionsDisabled}
+              disabled={props.forking || props.actionsDisabled}
               onClick={() => props.onFork?.(props.entryId!)}
             >
               {props.forking ? (
@@ -634,27 +635,9 @@ function CompactionNotice(props: { compaction: CompactionState }): React.JSX.Ele
  * @returns 完整对话记录
  */
 export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
-  const toolResults = useMemo(
-    () =>
-      new Map(
-        props.messages
-          .map(({ message }) => message)
-          .filter((message): message is ToolResultChatMessage => message.role === 'toolResult')
-          .map((message) => [message.toolCallId, message])
-      ),
-    [props.messages]
-  );
+  const toolResults = useMemo(() => indexToolResults(props.messages), [props.messages]);
   const pairedToolCallIds = useMemo(
-    () =>
-      new Set(
-        props.messages.flatMap(({ message }) =>
-          message.role === 'assistant'
-            ? message.content
-                .filter((content) => content.type === 'toolCall')
-                .map((content) => content.id)
-            : []
-        )
-      ),
+    () => selectPairedToolCallIds(props.messages),
     [props.messages]
   );
 

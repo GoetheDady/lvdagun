@@ -35,6 +35,12 @@ export type {
   TestConnectionResult,
 } from './model.ts';
 export {
+  createForkSessionTitle,
+  DEFAULT_SESSION_TITLE,
+  resolveSessionTitle,
+  type SessionTitleSources,
+} from './session-title.ts';
+export {
   API_PATHS,
   DEFAULT_SERVICE_PORT,
   DEV_WEB_PORT,

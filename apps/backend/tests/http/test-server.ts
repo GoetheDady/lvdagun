@@ -18,12 +18,13 @@ import type {
 } from '@lvdagun/protocol';
 
 import type { FileConfigStore } from '../../src/config/config-store';
+import { createAgentHub } from '../../src/hub/agent-hub';
 import {
   SessionArchivedError,
   SessionNotFoundError,
-  type Hub,
-  type HubSession,
-} from '../../src/hub/hub';
+  type AgentHubAdapter,
+  type AgentSessionAdapter,
+} from '../../src/hub/agent-hub-adapter';
 import { createServer } from '../../src/http/server';
 
 export const validConfig: ModelConfig = {
@@ -75,7 +76,7 @@ function assistantMessage(
 }
 
 /** 测试用可控 Hub 会话。 */
-export class FakeSession implements HubSession {
+export class FakeSession implements AgentSessionAdapter {
   readonly createdAt = Date.now();
   readonly promptTexts: string[] = [];
   readonly messages: ChatMessage[] = [];
@@ -330,7 +331,7 @@ export class FakeSession implements HubSession {
  * @returns Agent Hub、创建的会话和会话配置记录
  */
 export function makeFakeHub(): {
-  hub: Hub;
+  hub: AgentHubAdapter;
   sessions: FakeSession[];
   createOptions: ModelConfig[];
 } {
@@ -349,7 +350,7 @@ export function makeFakeHub(): {
     return session;
   };
 
-  const hub: Hub = {
+  const hub: AgentHubAdapter = {
     listProviders: vi.fn(async () => [{ id: 'anthropic', name: 'Anthropic' }]),
     listModels: vi.fn(async (providerId) =>
       providerId === 'anthropic' ? [{ id: 'claude-a', name: 'Claude A' }] : []
@@ -418,10 +419,10 @@ export function makeFakeHub(): {
  * @returns 服务地址与关闭函数
  */
 export async function startServer(
-  hub: Hub,
+  hub: AgentHubAdapter,
   configStore: FileConfigStore
 ): Promise<{ baseUrl: string; close: () => Promise<void> }> {
-  const app: Express = createServer({ hub, configStore });
+  const app: Express = createServer({ agentHub: createAgentHub(hub, configStore) });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const { port } = server.address() as AddressInfo;

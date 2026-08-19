@@ -8,13 +8,13 @@ import type {
   SessionMessage,
 } from '@lvdagun/protocol';
 
+import { useChatSession } from '@/hooks/use-chat-session';
 import {
   applyAssistantUpdate,
   chatReducer,
   initialState,
   type AssistantChatMessage,
-  useChatSession,
-} from '@/hooks/use-chat-session';
+} from '@/state/chat-session-state';
 
 vi.mock('@/services/api-client', () => ({
   api: {

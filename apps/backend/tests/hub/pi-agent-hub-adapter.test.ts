@@ -166,7 +166,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   };
 
   /**
-   * 创建可被 PiHubSession 使用的 AgentSession 替身。
+   * 创建可被 PiAgentSessionAdapter 使用的 AgentSession 替身。
    *
    * @returns AgentSession 结构
    */
@@ -343,7 +343,7 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
   };
 });
 
-import { createHub } from '../../src/hub/create-hub';
+import { createPiAgentHubAdapter } from '../../src/hub/pi-agent-hub-adapter';
 
 beforeEach(() => {
   pi.state.providers = [];
@@ -377,7 +377,7 @@ beforeEach(() => {
   pi.state.sessionInfos = [];
 });
 
-describe('createHub 目录能力', () => {
+describe('createPiAgentHubAdapter 目录能力', () => {
   it('只返回支持 API Key 的业务 Provider，并过滤基础设施条目', async () => {
     pi.state.providers = [
       { id: 'anthropic', name: 'Anthropic', hasApiKeyAuth: true, models: [] },
@@ -385,7 +385,7 @@ describe('createHub 目录能力', () => {
       { id: 'amazon-bedrock', name: 'Amazon Bedrock', hasApiKeyAuth: true, models: [] },
       { id: 'openai', name: 'OpenAI', hasApiKeyAuth: true, models: [] },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.listProviders()).resolves.toEqual([
       { id: 'anthropic', name: 'Anthropic' },
       { id: 'openai', name: 'OpenAI' },
@@ -401,7 +401,7 @@ describe('createHub 目录能力', () => {
         models: [{ id: 'claude-a', name: 'Claude A' }],
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.listModels('anthropic')).resolves.toEqual([
       { id: 'claude-a', name: 'Claude A' },
     ]);
@@ -410,7 +410,7 @@ describe('createHub 目录能力', () => {
   });
 });
 
-describe('createHub 连接测试', () => {
+describe('createPiAgentHubAdapter 连接测试', () => {
   beforeEach(() => {
     pi.state.providers = [
       {
@@ -424,7 +424,7 @@ describe('createHub 连接测试', () => {
 
   it('写入运行时凭证并返回连接结果', async () => {
     pi.state.streamResult = { stopReason: 'stop' };
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-test')).resolves.toEqual({ ok: true });
     expect(pi.state.streamApiKeys).toEqual(['sk-test']);
     expect(pi.state.loginCalls).toEqual([
@@ -438,7 +438,7 @@ describe('createHub 连接测试', () => {
 
   it('把 Pi stopReason=error 转换为连接失败', async () => {
     pi.state.streamResult = { stopReason: 'error', errorMessage: '401 凭证无效' };
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-bad')).resolves.toEqual({
       ok: false,
       message: '401 凭证无效',
@@ -447,7 +447,7 @@ describe('createHub 连接测试', () => {
   });
 });
 
-describe('createHub 会话能力', () => {
+describe('createPiAgentHubAdapter 会话能力', () => {
   beforeEach(() => {
     pi.state.providers = [
       {
@@ -460,7 +460,7 @@ describe('createHub 会话能力', () => {
   });
 
   it('启用 Pi 默认工具并关闭范围外资源', async () => {
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await hub.createSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' });
     expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write']);
     expect(pi.state.resourceLoaderOptions).toMatchObject({
@@ -471,6 +471,7 @@ describe('createHub 会话能力', () => {
       noContextFiles: true,
     });
     expect(pi.state.resourceLoaderOptions?.extensionFactories).toEqual([
+      expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-pending-messages', hidden: true }),
     ]);
     expect(pi.state.persistedFiles).toEqual([
@@ -489,7 +490,7 @@ describe('createHub 会话能力', () => {
       hasApiKeyAuth: true,
       models: [{ id: 'gpt-a', name: 'GPT A' }],
     });
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
       apiKey: '',
@@ -548,7 +549,7 @@ describe('createHub 会话能力', () => {
         messageCount: 4,
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     await expect(hub.listSessions()).resolves.toEqual([
       {
@@ -594,7 +595,7 @@ describe('createHub 会话能力', () => {
         messageCount: 1,
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     await hub.archiveSession('archived');
     await expect(hub.listSessions()).resolves.toEqual([
@@ -635,7 +636,7 @@ describe('createHub 会话能力', () => {
         messageCount: 0,
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     const session = await hub.openSession(
       { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
@@ -661,7 +662,7 @@ describe('createHub 会话能力', () => {
         messageCount: 0,
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     const session = await hub.openSession(
       { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
@@ -686,7 +687,7 @@ describe('createHub 会话能力', () => {
         },
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
       apiKey: '',
@@ -706,132 +707,9 @@ describe('createHub 会话能力', () => {
     ]);
   });
 
-  it('首次成功运行后使用当前模型生成一次 Pi 会话标题', async () => {
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: '帮我设计自动标题功能',
-      timestamp: 1,
-    };
-    const answerMessage = assistantMessage('采用 Pi 原生会话标题实现。');
-    pi.state.entries = [
-      { type: 'message', message: userMessage },
-      { type: 'message', message: answerMessage },
-    ];
-    pi.state.sessionEvents = [
-      { type: 'agent_start' },
-      { type: 'agent_end', messages: [answerMessage], willRetry: false },
-      { type: 'agent_settled' },
-    ];
-    pi.state.streamResult = {
-      ...answerMessage,
-      content: [{ type: 'text', text: '自动生成的会话标题' }],
-    };
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
-
-    await session.prompt('继续');
-    await vi.waitFor(() => expect(session.getState().sessionName).toBe('自动生成的会话标题'));
-    await session.prompt('再次运行');
-
-    expect(pi.state.streamContexts).toHaveLength(1);
-    expect(pi.state.entries).toContainEqual(
-      expect.objectContaining({ type: 'custom', customType: 'lvdagun.auto-title-attempted' })
-    );
-  });
-
-  it('自动标题生成期间的手动标题不会被覆盖', async () => {
-    const answerMessage = assistantMessage('已经完成实现。');
-    pi.state.entries = [
-      { type: 'message', message: { role: 'user', content: '实现标题', timestamp: 1 } },
-      { type: 'message', message: answerMessage },
-    ];
-    pi.state.sessionEvents = [
-      { type: 'agent_start' },
-      { type: 'agent_end', messages: [answerMessage], willRetry: false },
-      { type: 'agent_settled' },
-    ];
-    let resolveTitle!: (message: ChatMessage) => void;
-    pi.state.streamResult = new Promise((resolve) => {
-      resolveTitle = resolve;
-    });
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
-
-    await session.prompt('继续');
-    await vi.waitFor(() => expect(pi.state.streamContexts).toHaveLength(1));
-    session.setSessionName('用户手动设置的标题');
-    resolveTitle({ ...answerMessage, content: [{ type: 'text', text: '自动生成的会话标题' }] });
-
-    await vi.waitFor(() => expect(session.getState().sessionName).toBe('用户手动设置的标题'));
-  });
-
-  it('本次运行失败时不使用历史成功回答生成标题', async () => {
-    const historicalAnswer = assistantMessage('历史成功回答');
-    const failedAnswer = assistantMessage('本次运行失败', 'error', 3);
-    pi.state.entries = [
-      { type: 'message', message: { role: 'user', content: '历史请求', timestamp: 1 } },
-      { type: 'message', message: historicalAnswer },
-    ];
-    pi.state.sessionEvents = [
-      { type: 'agent_start' },
-      { type: 'agent_end', messages: [failedAnswer], willRetry: false },
-      { type: 'agent_settled' },
-    ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
-
-    await session.prompt('失败的本次请求');
-
-    expect(pi.state.streamContexts).toHaveLength(0);
-    expect(session.getState().sessionName).toBeNull();
-  });
-
-  it('标题模型返回错误或不合规内容时不持久化且不重试', async () => {
-    const answerMessage = assistantMessage('本次回答成功。');
-    pi.state.entries = [
-      { type: 'message', message: { role: 'user', content: '生成标题', timestamp: 1 } },
-      { type: 'message', message: answerMessage },
-    ];
-    pi.state.sessionEvents = [
-      { type: 'agent_start' },
-      { type: 'agent_end', messages: [answerMessage], willRetry: false },
-      { type: 'agent_settled' },
-    ];
-    pi.state.streamResult = {
-      ...answerMessage,
-      content: [{ type: 'text', text: 'API error response' }],
-      stopReason: 'error',
-    };
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
-
-    await session.prompt('第一次运行');
-    await vi.waitFor(() => expect(pi.state.streamContexts).toHaveLength(1));
-    await session.prompt('第二次运行');
-
-    expect(pi.state.streamContexts).toHaveLength(1);
-    expect(session.getState().sessionName).toBeNull();
-  });
-
   it('跟踪自动压缩，并在中止时同时取消压缩和 Agent 运行', async () => {
     pi.state.sessionEvents = [{ type: 'compaction_start', reason: 'threshold' }];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
       apiKey: '',
@@ -877,7 +755,7 @@ describe('createHub 会话能力', () => {
         timestamp: '1970-01-01T00:00:00.002Z',
       },
     ];
-    const hub = createHub({ dataDir: '/tmp/lvdagun-test' });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     const session = await hub.createSession({
       provider: 'anthropic',
       apiKey: '',

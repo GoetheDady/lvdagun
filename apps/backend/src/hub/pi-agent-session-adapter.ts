@@ -9,7 +9,6 @@ import type {
   AgentSessionState,
   AgentStreamEvent,
   AvailableModel,
-  ChatMessage,
   ModelReference,
   SessionMessage,
   SessionSnapshotEvent,
@@ -22,23 +21,16 @@ import {
   AgentNotRunningError,
   ModelUnavailableError,
   SessionEntryConflictError,
-  type HubSession,
-} from './hub';
+  type AgentSessionAdapter,
+} from './agent-hub-adapter';
 import { toJsonAgentEvent } from './pi-json-event';
 
-const AUTO_TITLE_ENTRY_TYPE = 'lvdagun.auto-title-attempted';
-const TITLE_INPUT_LIMIT = 2000;
-const TITLE_TIMEOUT_MS = 15_000;
-const TITLE_SYSTEM_PROMPT = `你负责为一段 AI 对话生成标题。只输出标题本身，不要引号、序号或解释。
-要求：以中文为主，8 到 20 个字符；可保留必要的英文技术标识符；概括用户意图与结果；不得复述凭据、令牌、绝对路径或个人敏感信息。`;
-
 /** 使用 Pi AgentSessionRuntime 的 Hub 会话实现 */
-export class PiHubSession implements HubSession {
+export class PiAgentSessionAdapter implements AgentSessionAdapter {
   readonly id: string;
   readonly createdAt: number;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   private activeCompaction: ActiveCompaction | null = null;
-  private latestRunSucceeded = false;
   private modelWarning: string | null;
   private unsubscribeSession: (() => void) | null = null;
   private unsubscribePendingMessages: (() => void) | null = null;
@@ -239,8 +231,7 @@ export class PiHubSession implements HubSession {
     return {
       type: 'session_snapshot',
       messages: this.getMessages(),
-      activeAssistant:
-        streamingMessage?.role === 'assistant' ? { ...streamingMessage } : null,
+      activeAssistant: streamingMessage?.role === 'assistant' ? { ...streamingMessage } : null,
       state: this.getState(),
     };
   }
@@ -366,16 +357,6 @@ export class PiHubSession implements HubSession {
    * @returns 无返回值
    */
   private readonly handleEvent = (event: AgentSessionEvent): void => {
-    if (event.type === 'agent_start') {
-      this.latestRunSucceeded = false;
-    } else if (event.type === 'agent_end') {
-      this.latestRunSucceeded =
-        !event.willRetry &&
-        event.messages.some(
-          (message) => message.role === 'assistant' && message.stopReason === 'stop'
-        );
-    }
-
     if (event.type === 'compaction_start') {
       this.activeCompaction = { reason: event.reason };
     } else if (event.type === 'compaction_end' || event.type === 'agent_settled') {
@@ -384,120 +365,5 @@ export class PiHubSession implements HubSession {
 
     const jsonEvent = toJsonAgentEvent(event);
     this.emit(jsonEvent);
-
-    if (event.type === 'agent_settled' && this.latestRunSucceeded) {
-      this.latestRunSucceeded = false;
-      void this.generateTitleOnce();
-    }
   };
-
-  /**
-   * 在首次成功对话后尝试一次后台标题生成。
-   *
-   * 自定义条目先于网络请求落盘，确保失败或服务重启后都不会重复计费；生成结束时再次读取
-   * `sessionName`，避免覆盖请求期间由用户设置的手动标题。
-   *
-   * @returns 后台尝试完成后的 Promise
-   */
-  private async generateTitleOnce(): Promise<void> {
-    const session = this.runtime.session;
-    const entries = session.sessionManager.getBranch();
-    if (
-      session.sessionName ||
-      entries.some((entry) => entry.type === 'custom' && entry.customType === AUTO_TITLE_ENTRY_TYPE)
-    ) {
-      return;
-    }
-
-    const messages = this.getMessages();
-    const userMessage = messages.find(({ message }) => message.role === 'user')?.message;
-    const assistantMessage = messages.find(
-      (item): item is SessionMessage & { message: Extract<ChatMessage, { role: 'assistant' }> } =>
-        item.message.role === 'assistant' && item.message.stopReason === 'stop'
-    )?.message;
-    if (!userMessage || userMessage.role !== 'user' || !assistantMessage) {
-      return;
-    }
-
-    session.sessionManager.appendCustomEntry(AUTO_TITLE_ENTRY_TYPE, { attemptedAt: Date.now() });
-    const userText = this.getUserText(userMessage).slice(0, TITLE_INPUT_LIMIT);
-    const assistantText = assistantMessage.content
-      .filter((content) => content.type === 'text')
-      .map((content) => content.text)
-      .join('\n')
-      .slice(0, TITLE_INPUT_LIMIT);
-    if (!userText || !assistantText || !session.model) {
-      return;
-    }
-
-    try {
-      const stream = this.runtime.services.modelRuntime.streamSimple(
-        session.model,
-        {
-          systemPrompt: TITLE_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: 'user',
-              content: `用户请求：\n${userText}\n\n助手回答：\n${assistantText}`,
-              timestamp: Date.now(),
-            },
-          ],
-          tools: [],
-        },
-        { maxTokens: 64, signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) }
-      );
-      const result = await stream.result();
-      if (result.stopReason !== 'stop') {
-        return;
-      }
-      const title = this.parseGeneratedTitle(result);
-      if (title && !session.sessionName) {
-        session.setSessionName(title);
-      }
-    } catch (error) {
-      console.error('自动生成会话标题失败:', error);
-    }
-  }
-
-  /** @param message - 首条用户消息 @returns 纯文本内容 */
-  private getUserText(message: Extract<ChatMessage, { role: 'user' }>): string {
-    return typeof message.content === 'string'
-      ? message.content
-      : message.content
-          .filter((content) => content.type === 'text')
-          .map((content) => content.text)
-          .join('\n');
-  }
-
-  /**
-   * 校验模型输出，防止不合规标题或敏感数据进入持久化名称。
-   *
-   * @param message - 标题模型最终消息
-   * @returns 合规标题；输出不合规时返回 null
-   */
-  private parseGeneratedTitle(message: Extract<ChatMessage, { role: 'assistant' }>): string | null {
-    const title = message.content
-      .filter((content) => content.type === 'text')
-      .map((content) => content.text)
-      .join('')
-      .trim()
-      .replace(/^标题[：:]\s*/, '')
-      .replace(/^["'“‘]|["'”’]$/g, '')
-      .trim();
-    const length = [...title].length;
-    const chineseCharacterCount = title.match(/\p{Script=Han}/gu)?.length ?? 0;
-    const meaningfulCharacterCount = title.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
-    const containsSensitiveText =
-      /(?:\/Users\/|\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\|sk-[A-Za-z0-9_-]{8,}|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|1[3-9]\d{9}|\d{17}[\dXx]|(?:api[_ -]?key|token|密码|令牌)[：:=])/i.test(
-        title
-      );
-    return length >= 8 &&
-      length <= 20 &&
-      chineseCharacterCount >= 4 &&
-      chineseCharacterCount * 2 >= meaningfulCharacterCount &&
-      !title.includes('\n') &&
-      !containsSensitiveText
-      ? title
-      : null;
-  }
 }

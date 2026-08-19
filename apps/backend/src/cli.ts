@@ -13,9 +13,9 @@ import { DEFAULT_SERVICE_PORT, DEV_WEB_PORT, SERVICE_HOST } from '@lvdagun/proto
 
 import { FileConfigStore } from './config/config-store';
 import { CONFIG_FILE, DATA_DIR } from './config/paths';
-import { createHub } from './hub/create-hub';
+import { createPiAgentHubAdapter } from './hub/pi-agent-hub-adapter';
+import { createAgentHub } from './hub/agent-hub';
 import { createServer } from './http/server';
-import { createSessionManager } from './sessions/session-manager';
 
 const PID_FILE = join(DATA_DIR, 'serve.pid');
 
@@ -43,12 +43,9 @@ async function serve(): Promise<void> {
   // 生产模式托管 web 构建产物;dev 模式页面由 vite 提供,只开 API
   const webDist = join(import.meta.dirname, '../../web/dist');
   const configStore = new FileConfigStore(CONFIG_FILE);
-  const hub = createHub({ dataDir: DATA_DIR });
-  const sessionManager = createSessionManager(hub, configStore);
+  const agentHub = createAgentHub(createPiAgentHubAdapter({ dataDir: DATA_DIR }), configStore);
   const app = createServer({
-    configStore,
-    hub,
-    sessionManager,
+    agentHub,
     webDist: !isDev && existsSync(webDist) ? webDist : undefined,
   });
 
@@ -71,7 +68,7 @@ async function serve(): Promise<void> {
   // 优雅退出:关服务、清 pid 文件(SIGINT=Ctrl+C,SIGTERM=lvdagun stop)
   const shutdown = async (): Promise<void> => {
     server.close();
-    await sessionManager.dispose();
+    await agentHub.dispose();
     await rm(PID_FILE, { force: true });
     process.exit(0);
   };
