@@ -1,0 +1,147 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { RpcConnection } from '@/services/rpc-client';
+
+class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  static instances: MockWebSocket[] = [];
+
+  readonly sent: string[] = [];
+  readyState = MockWebSocket.CONNECTING;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+
+  constructor(
+    readonly url: string,
+    readonly protocol: string
+  ) {
+    MockWebSocket.instances.push(this);
+  }
+
+  open(): void {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  receive(message: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(message) });
+  }
+
+  close(): void {
+    if (this.readyState === MockWebSocket.CLOSED) return;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
+}
+
+beforeEach(() => {
+  MockWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', MockWebSocket);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+async function openConnection(connection: RpcConnection): Promise<MockWebSocket> {
+  const openingRequest = connection.request<unknown>('catalog/listProviders');
+  const socket = MockWebSocket.instances[0]!;
+  socket.open();
+  const initialize = JSON.parse(socket.sent[0]!) as { id: number };
+  socket.receive({
+    jsonrpc: '2.0',
+    id: initialize.id,
+    result: {
+      protocolVersion: 1,
+      serverInfo: { name: 'lvdagun', version: '0.1.0' },
+      capabilities: {},
+    },
+  });
+  await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+  const request = JSON.parse(socket.sent[1]!) as { id: number };
+  socket.receive({ jsonrpc: '2.0', id: request.id, result: [] });
+  await openingRequest;
+  return socket;
+}
+
+describe('RpcConnection', () => {
+  it('通过 id 匹配并发请求的乱序响应', async () => {
+    const connection = new RpcConnection();
+    const socket = await openConnection(connection);
+    const first = connection.request<unknown[]>('catalog/listModels', { provider: 'a' });
+    const second = connection.request<unknown[]>('catalog/listModels', { provider: 'b' });
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(4));
+    const firstRequest = JSON.parse(socket.sent[2]!) as { id: number };
+    const secondRequest = JSON.parse(socket.sent[3]!) as { id: number };
+
+    const firstResult = [{ id: 'first', name: 'First' }];
+    const secondResult = [{ id: 'second', name: 'Second' }];
+    socket.receive({ jsonrpc: '2.0', id: secondRequest.id, result: secondResult });
+    socket.receive({ jsonrpc: '2.0', id: firstRequest.id, result: firstResult });
+
+    await expect(first).resolves.toEqual(firstResult);
+    await expect(second).resolves.toEqual(secondResult);
+  });
+
+  it('拒绝不符合共享协议的服务端通知', async () => {
+    const connection = new RpcConnection();
+    const socket = await openConnection(connection);
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const subscribing = connection.subscribeSession('session-1', { onEvent, onError });
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(3));
+    const request = JSON.parse(socket.sent[2]!) as { id: number };
+    socket.receive({
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        type: 'session_snapshot',
+        history: {
+          schemaVersion: 1,
+          sessionId: 'session-1',
+          branchId: 'branch-1',
+          revision: 0,
+          runs: [],
+          draft: null,
+          blobs: {},
+        },
+        state: {
+          sessionName: null,
+          executionAvailable: true,
+          isRunning: false,
+          activeCompaction: null,
+          pendingMessages: [],
+          thinkingLevel: 'off',
+          availableThinkingLevels: ['off'],
+          model: {
+            provider: 'anthropic',
+            providerName: 'Anthropic',
+            id: 'claude-a',
+            name: 'Claude A',
+          },
+          availableModels: [],
+          modelWarning: null,
+        },
+      },
+    });
+    const unsubscribe = await subscribing;
+
+    socket.receive({
+      jsonrpc: '2.0',
+      method: 'session/event',
+      params: { sessionId: 'session-1', event: {} },
+    });
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onEvent).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+});

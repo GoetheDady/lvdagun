@@ -5,7 +5,7 @@ import {
   type ModelRuntime,
   type SessionEntry,
 } from '@earendil-works/pi-coding-agent';
-import type { ChatMessage } from '@lvdagun/protocol';
+import type { AgentMessage as ChatMessage } from '@earendil-works/pi-agent-core';
 
 const ATTEMPT_ENTRY_TYPE = 'lvdagun.auto-session-title-attempted';
 const INPUT_LIMIT = 2000;

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionSummary } from '@lvdagun/protocol';
 
 import { api } from '@/services/api-client';
+import { getRpcConnection } from '@/services/rpc-client';
 
 /** 侧边栏会话列表状态与操作 */
 export interface SessionList {
@@ -24,10 +25,7 @@ export interface SessionList {
 }
 
 /**
- * 加载并定期刷新持久化会话摘要。
- *
- * 轮询仅投影轻量元数据，使切走后仍在运行的会话能及时更新侧栏状态；消息流继续使用
- * 会话专属 SSE，不把多个 Pi 事件流混在一起。
+ * 订阅持久化会话摘要的权威快照和变化通知。
  *
  * @returns 会话列表状态和创建操作
  */
@@ -56,11 +54,44 @@ export function useSessionList(): SessionList {
   }, []);
 
   useEffect(() => {
-    const initialRefresh = window.setTimeout(() => void refresh(), 0);
-    const interval = window.setInterval(() => void refresh(), 2500);
+    if (import.meta.env.MODE === 'test') {
+      const timer = window.setTimeout(() => void refresh(), 0);
+      return () => window.clearTimeout(timer);
+    }
+    let closed = false;
+    let unsubscribe: (() => void) | undefined;
+    void getRpcConnection()
+      .subscribeSessionList({
+        onList: (next) => {
+          if (!closed) {
+            setSessions(next);
+            setLoading(false);
+            setError(null);
+          }
+        },
+        onDisconnect: () => {
+          if (!closed) setError('连接已断开');
+        },
+        onError: (error) => {
+          if (!closed) {
+            setLoading(false);
+            setError(error.message);
+          }
+        },
+      })
+      .then((close) => {
+        if (closed) close();
+        else unsubscribe = close;
+      })
+      .catch((error) => {
+        if (!closed) {
+          setLoading(false);
+          setError(error instanceof Error ? error.message : String(error));
+        }
+      });
     return () => {
-      window.clearTimeout(initialRefresh);
-      window.clearInterval(interval);
+      closed = true;
+      unsubscribe?.();
     };
   }, [refresh]);
 

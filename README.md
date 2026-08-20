@@ -26,7 +26,7 @@ bun run stop         # 停止本地服务(lvdagun stop)
 
 ## 结构
 
-- `apps/backend/` — 本地服务(Express + Pi Agent SDK):配置存储、模型目录、SSE 对话流、CLI
+- `apps/backend/` — 本地服务(Express + Pi Agent SDK):配置存储、模型目录、JSON-RPC 对话流、CLI
 - `apps/web/` — 浏览器客户端(React + Vite):配置向导、对话页、设置页
 - `packages/protocol/` — 客户端与本地服务共享的类型、接口路径和传输配置
 

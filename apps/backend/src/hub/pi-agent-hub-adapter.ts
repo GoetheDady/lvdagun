@@ -3,7 +3,7 @@
  *
  * 本模块是本地服务中唯一创建 Pi 运行时和会话的地方。
  */
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -32,7 +32,7 @@ import {
 } from './agent-hub-adapter';
 import { PiAgentSessionAdapter } from './pi-agent-session-adapter';
 import { createAutoSessionTitleExtension } from '../extensions/auto-session-title/auto-session-title-extension';
-import { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
+import { createPendingMessageExtension } from '../extensions/pending-messages/pending-message-extension';
 
 const INFRA_PROVIDERS = new Set([
   'faux',
@@ -83,7 +83,7 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
     config: Parameters<AgentHubAdapter['createSession']>[0],
     piSessionManager: PiSessionManager
   ): Promise<AgentSessionAdapter> => {
-    const pendingMessages = new PendingMessageController();
+    const pendingMessages = createPendingMessageExtension();
     const runtime = await getRuntime();
     if (config.apiKey) {
       await runtime.setRuntimeApiKey(config.provider, config.apiKey);
@@ -133,16 +133,7 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
         resourceLoaderOptions: {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           noExtensions: true,
-          extensionFactories: [
-            createAutoSessionTitleExtension(runtime),
-            {
-              name: 'lvdagun-pending-messages',
-              hidden: true,
-              factory: (pi) => {
-                pi.on('agent_end', (event) => pendingMessages.handleAgentEnd(event));
-              },
-            },
-          ],
+          extensionFactories: [pendingMessages.extension, createAutoSessionTitleExtension(runtime)],
           noSkills: true,
           noPromptTemplates: true,
           noThemes: true,
@@ -216,6 +207,16 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
   };
 
   return {
+    async clearLegacySessions(): Promise<void> {
+      await Promise.all([
+        rm(sessionDir, { recursive: true, force: true }),
+        rm(archiveDir, { recursive: true, force: true }),
+      ]);
+      await Promise.all([
+        mkdir(sessionDir, { recursive: true, mode: 0o700 }),
+        mkdir(archiveDir, { recursive: true, mode: 0o700 }),
+      ]);
+    },
     async listProviders(): Promise<ProviderInfo[]> {
       const runtime = await getRuntime();
       return runtime

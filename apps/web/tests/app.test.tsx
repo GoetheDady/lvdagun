@@ -26,7 +26,7 @@ vi.mock('@/services/api-client', () => ({
   },
 }));
 
-vi.mock('@/services/event-stream', () => ({
+vi.mock('@/services/session-events', () => ({
   subscribeEvents: vi.fn(() => () => {}),
 }));
 
@@ -50,9 +50,18 @@ beforeEach(() => {
     },
   ]);
   vi.mocked(api.createSession).mockResolvedValue({ sessionId: 'session-a' });
-  vi.mocked(api.getMessages).mockResolvedValue([]);
+  vi.mocked(api.getMessages).mockResolvedValue({
+    schemaVersion: 1,
+    sessionId: 'session-a',
+    branchId: 'branch-a',
+    revision: 0,
+    runs: [],
+    draft: null,
+    blobs: {},
+  });
   vi.mocked(api.getSessionState).mockResolvedValue({
     sessionName: null,
+    executionAvailable: true,
     isRunning: false,
     activeCompaction: null,
     pendingMessages: [],

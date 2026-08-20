@@ -1,141 +1,63 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const request = vi.fn();
+vi.mock('@/services/rpc-client', () => ({ getRpcConnection: () => ({ request }) }));
 
 import { api } from '@/services/api-client';
 
-beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn());
-});
+beforeEach(() => request.mockReset());
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-/**
- * 构造 JSON Fetch 响应。
- *
- * @param status - HTTP 状态码
- * @param body - JSON 响应体
- * @returns Fetch Response
- */
-function mockFetchResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-describe('api 请求', () => {
-  it('getConfig 请求接口并解析 JSON', async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      mockFetchResponse(200, { provider: 'anthropic', apiKey: 'k', modelId: 'm' })
-    );
+describe('JSON-RPC 客户端', () => {
+  it('通过 RPC 读取配置', async () => {
+    request.mockResolvedValue({ provider: 'anthropic', apiKey: 'k', modelId: 'm' });
     await expect(api.getConfig()).resolves.toEqual({
       provider: 'anthropic',
       apiKey: 'k',
       modelId: 'm',
     });
-
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe('/api/config');
-    expect(init).toBeUndefined();
+    expect(request).toHaveBeenCalledWith('config/get');
   });
 
-  it('服务端错误时抛带错误信息的异常', async () => {
-    vi.mocked(fetch).mockResolvedValue(mockFetchResponse(409, { error: '尚未配置模型' }));
-    await expect(api.getConfig()).rejects.toThrow('尚未配置模型');
-  });
-
-  it('prompt 以 POST JSON 发送文本', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 202 }));
+  it('通过 RPC 发送提示并只等待准入响应', async () => {
+    request.mockResolvedValue({ accepted: true });
     await api.prompt('session-a', '你好');
-    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
-    expect(url).toBe('/api/sessions/session-a/prompt');
-    expect(init!.method).toBe('POST');
-    expect(init!.body).toBe(JSON.stringify({ text: '你好' }));
+    expect(request).toHaveBeenCalledWith('session/prompt', {
+      sessionId: 'session-a',
+      text: '你好',
+    });
   });
 
-  it('创建会话并解析返回的 session id', async () => {
-    vi.mocked(fetch).mockResolvedValue(mockFetchResponse(201, { sessionId: 'session-a' }));
-    await expect(api.createSession()).resolves.toEqual({ sessionId: 'session-a' });
-    expect(vi.mocked(fetch).mock.calls[0]![0]).toBe('/api/sessions');
-  });
-
-  it('分叉和编辑重发会编码会话及 Pi 条目标识', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(mockFetchResponse(201, { sessionId: 'forked' }))
-      .mockResolvedValueOnce(mockFetchResponse(200, { messages: [] }));
-
-    await api.forkSession('session/a', 'assistant/1');
+  it('把会话操作映射为资源方法和结构化参数', async () => {
+    request.mockResolvedValueOnce({ sessionId: 'forked' }).mockResolvedValueOnce({ history: {} });
+    await expect(api.forkSession('session/a', 'assistant/1')).resolves.toEqual({
+      sessionId: 'forked',
+    });
     await api.editAndResend('session/a', 'user/1', '修改后');
-
-    expect(vi.mocked(fetch).mock.calls).toEqual([
-      [
-        '/api/sessions/session%2Fa/forks',
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ entryId: 'assistant/1' }),
-        },
-      ],
-      [
-        '/api/sessions/session%2Fa/messages/user%2F1/edit-resend',
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: '修改后' }),
-        },
-      ],
-    ]);
+    expect(request).toHaveBeenNthCalledWith(1, 'session/fork', {
+      sessionId: 'session/a',
+      runId: 'assistant/1',
+    });
+    expect(request).toHaveBeenNthCalledWith(2, 'session/editResend', {
+      sessionId: 'session/a',
+      itemId: 'user/1',
+      text: '修改后',
+    });
   });
 
-  it('归档与删除使用按会话寻址的生命周期接口', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
-
-    await api.archiveSession('session-a');
-    await api.deleteSession('session-a');
-
-    expect(vi.mocked(fetch).mock.calls[0]).toEqual([
-      '/api/sessions/session-a/archive',
-      { method: 'POST' },
-    ]);
-    expect(vi.mocked(fetch).mock.calls[1]).toEqual([
-      '/api/sessions/session-a',
-      { method: 'DELETE' },
-    ]);
-  });
-
-  it('使用按会话寻址接口更新标题', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
-
-    await api.setSessionTitle('session-a', '标题');
-
-    expect(vi.mocked(fetch).mock.calls[0]).toEqual([
-      '/api/sessions/session-a/title',
-      {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: '标题' }),
-      },
-    ]);
-  });
-
-  it('使用按会话和稳定消息 ID 寻址的待处理消息接口', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(mockFetchResponse(200, { texts: ['第一条'] }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-
+  it('通过 RPC 管理待处理消息和会话设置', async () => {
+    request.mockResolvedValue({});
     await api.steerPendingMessage('session-a', 'pending/a');
     await api.removePendingMessage('session-a', 'pending/a');
-    await expect(api.takePendingMessages('session-a')).resolves.toEqual({ texts: ['第一条'] });
     await api.discardPendingMessages('session-a');
-
-    expect(vi.mocked(fetch).mock.calls).toEqual([
-      ['/api/sessions/session-a/pending-messages/pending%2Fa/steer', { method: 'POST' }],
-      ['/api/sessions/session-a/pending-messages/pending%2Fa', { method: 'DELETE' }],
-      ['/api/sessions/session-a/pending-messages/take', { method: 'POST' }],
-      ['/api/sessions/session-a/pending-messages', { method: 'DELETE' }],
-    ]);
+    await api.setThinkingLevel('session-a', 'high');
+    await api.setSessionModel('session-a', { provider: 'openai', id: 'gpt-a' });
+    expect(request).toHaveBeenNthCalledWith(1, 'session/pending/steer', {
+      sessionId: 'session-a',
+      messageId: 'pending/a',
+    });
+    expect(request).toHaveBeenNthCalledWith(5, 'session/model', {
+      sessionId: 'session-a',
+      model: { provider: 'openai', id: 'gpt-a' },
+    });
   });
 });

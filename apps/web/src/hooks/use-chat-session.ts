@@ -16,10 +16,10 @@ export interface ChatSession {
   state: ChatSessionState;
   /** @param text - 用户输入的纯文本 @returns Pi 是否接受提示 */
   send(text: string): Promise<boolean>;
-  /** @param entryId - 助手回复条目标识 @returns 新会话标识；失败时返回 null */
-  forkSession(entryId: string): Promise<string | null>;
-  /** @param entryId - 用户消息条目标识 @param text - 修改文本 @returns 是否被接受 */
-  editAndResend(entryId: string, text: string): Promise<boolean>;
+  /** @param runId - 助手回复运行标识 @returns 新会话标识；失败时返回 null */
+  forkSession(runId: string): Promise<string | null>;
+  /** @param itemId - 用户消息条目标识 @param text - 修改文本 @returns 是否被接受 */
+  editAndResend(itemId: string, text: string): Promise<boolean>;
   /** @returns Pi 完全稳定后应恢复到输入框的文本 */
   abort(): Promise<string[]>;
   /** @param messageId - 待处理消息标识 @returns Pi 接受调整方向后的 Promise */
@@ -37,7 +37,7 @@ export interface ChatSession {
 }
 
 /**
- * 连接会话恢复线路和 HTTP 命令，并向对话页提供结构化状态。
+ * 连接会话恢复线路和 JSON-RPC 命令，并向对话页提供结构化状态。
  *
  * @param sessionId - 当前 URL 选择的会话标识
  * @returns 会话状态和用户可执行的命令
@@ -51,8 +51,8 @@ export function useChatSession(sessionId: string): ChatSession {
     async (text: string): Promise<boolean> => {
       if (
         !state.synchronized ||
+        state.session?.executionAvailable === false ||
         state.sending ||
-        state.compaction?.status === 'running' ||
         state.settingModel ||
         state.settingThinkingLevel
       ) {
@@ -74,8 +74,8 @@ export function useChatSession(sessionId: string): ChatSession {
     },
     [
       sessionId,
-      state.compaction?.status,
       state.sending,
+      state.session?.executionAvailable,
       state.settingModel,
       state.settingThinkingLevel,
       state.synchronized,
@@ -83,31 +83,31 @@ export function useChatSession(sessionId: string): ChatSession {
   );
 
   const forkSession = useCallback(
-    async (entryId: string): Promise<string | null> => {
-      if (!state.synchronized) return null;
+    async (runId: string): Promise<string | null> => {
+      if (!state.synchronized || state.session?.executionAvailable === false) return null;
       try {
-        return (await api.forkSession(sessionId, entryId)).sessionId;
+        return (await api.forkSession(sessionId, runId)).sessionId;
       } catch (error) {
         dispatch(operationFailedAction(error));
         return null;
       }
     },
-    [sessionId, state.synchronized]
+    [sessionId, state.session?.executionAvailable, state.synchronized]
   );
 
   const editAndResend = useCallback(
-    async (entryId: string, text: string): Promise<boolean> => {
-      if (!state.synchronized) return false;
+    async (itemId: string, text: string): Promise<boolean> => {
+      if (!state.synchronized || state.session?.executionAvailable === false) return false;
       try {
-        const result = await api.editAndResend(sessionId, entryId, text);
-        dispatch({ type: 'history_loaded', messages: result.messages });
+        const result = await api.editAndResend(sessionId, itemId, text);
+        dispatch({ type: 'history_loaded', history: result.history });
         return true;
       } catch (error) {
         dispatch(operationFailedAction(error));
         return false;
       }
     },
-    [sessionId, state.synchronized]
+    [sessionId, state.session?.executionAvailable, state.synchronized]
   );
 
   const abort = useCallback(async (): Promise<string[]> => {
@@ -125,51 +125,52 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const steerPendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
-      if (!state.synchronized) return;
+      if (!state.synchronized || state.session?.executionAvailable === false) return;
       try {
         await api.steerPendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId, state.synchronized]
+    [sessionId, state.session?.executionAvailable, state.synchronized]
   );
 
   const removePendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
-      if (!state.synchronized) return;
+      if (!state.synchronized || state.session?.executionAvailable === false) return;
       try {
         await api.removePendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId, state.synchronized]
+    [sessionId, state.session?.executionAvailable, state.synchronized]
   );
 
   const takePendingMessages = useCallback(async (): Promise<string[]> => {
-    if (!state.synchronized) return [];
+    if (!state.synchronized || state.session?.executionAvailable === false) return [];
     try {
       return (await api.takePendingMessages(sessionId)).texts;
     } catch (error) {
       dispatch(operationFailedAction(error));
       return [];
     }
-  }, [sessionId, state.synchronized]);
+  }, [sessionId, state.session?.executionAvailable, state.synchronized]);
 
   const discardPendingMessages = useCallback(async (): Promise<void> => {
-    if (!state.synchronized) return;
+    if (!state.synchronized || state.session?.executionAvailable === false) return;
     try {
       await api.discardPendingMessages(sessionId);
     } catch (error) {
       dispatch(operationFailedAction(error));
     }
-  }, [sessionId, state.synchronized]);
+  }, [sessionId, state.session?.executionAvailable, state.synchronized]);
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
       if (
         !state.synchronized ||
+        state.session?.executionAvailable === false ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||
@@ -189,6 +190,7 @@ export function useChatSession(sessionId: string): ChatSession {
       sessionId,
       state.isRunning,
       state.session?.thinkingLevel,
+      state.session?.executionAvailable,
       state.settingModel,
       state.settingThinkingLevel,
       state.synchronized,
@@ -199,6 +201,7 @@ export function useChatSession(sessionId: string): ChatSession {
     async (model: ModelReference): Promise<void> => {
       if (
         !state.synchronized ||
+        state.session?.executionAvailable === false ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||

@@ -1,31 +1,29 @@
 import type { AddressInfo } from 'node:net';
 
-import type { Express } from 'express';
-import { expect, vi } from 'vitest';
-
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type {
   AgentSessionState,
-  AgentStreamEvent,
   AvailableModel,
-  ChatMessage,
   ModelConfig,
-  ModelReference,
-  PendingMessage,
-  SessionMessage,
-  SessionSnapshotEvent,
-  TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
+import type { Express } from 'express';
+import { vi } from 'vitest';
 
 import type { FileConfigStore } from '../../src/config/config-store';
-import { createAgentHub } from '../../src/hub/agent-hub';
-import {
-  SessionArchivedError,
-  SessionNotFoundError,
-  type AgentHubAdapter,
-  type AgentSessionAdapter,
+import { ProductHistory } from '../../src/history/product-history';
+import type { ProductHistoryRepository } from '../../src/history/product-history-repository';
+import type {
+  AgentHubAdapter,
+  AgentSessionAdapter,
+  AgentSessionAdapterEvent,
+  ExecutionMessage,
 } from '../../src/hub/agent-hub-adapter';
+import { SessionNotFoundError } from '../../src/hub/agent-hub-adapter';
+import { createAgentHub } from '../../src/hub/agent-hub';
+import { attachRpcServer } from '../../src/http/rpc-server';
 import { createServer } from '../../src/http/server';
+import { MemoryHistoryRepository } from '../history/memory-history-repository';
 
 export const validConfig: ModelConfig = {
   provider: 'anthropic',
@@ -33,454 +31,168 @@ export const validConfig: ModelConfig = {
   modelId: 'claude-a',
 };
 
-const availableModels: AvailableModel[] = [
-  {
-    provider: 'anthropic',
-    providerName: 'Anthropic',
-    id: 'claude-a',
-    name: 'Claude A',
-  },
-  { provider: 'openai', providerName: 'OpenAI', id: 'gpt-a', name: 'GPT A' },
-];
+const model: AvailableModel = {
+  provider: 'anthropic',
+  providerName: 'Anthropic',
+  id: 'claude-a',
+  name: 'Claude A',
+};
 
-/**
- * 构造测试使用的 Pi 助手消息。
- *
- * @param text - 助手文本
- * @param timestamp - 消息时间戳
- * @param stopReason - Pi 结束原因
- * @returns 完整助手消息
- */
-function assistantMessage(
-  text: string,
-  timestamp: number,
-  stopReason: 'pending' | 'stop' | 'aborted' = 'stop'
-): Extract<ChatMessage, { role: 'assistant' }> {
-  return {
-    role: 'assistant',
-    content: text ? [{ type: 'text', text }] : [],
-    api: 'anthropic-messages',
-    provider: 'anthropic',
-    model: 'claude-a',
-    usage: {
-      input: 10,
-      output: 5,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 15,
-      cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
-    },
-    stopReason,
-    timestamp,
-  };
-}
-
-/** 测试用可控 Hub 会话。 */
+/** JSON-RPC 集成测试使用的最小 Pi 会话。 */
 export class FakeSession implements AgentSessionAdapter {
   readonly createdAt = Date.now();
-  readonly promptTexts: string[] = [];
-  readonly messages: ChatMessage[] = [];
-  disposeCalls = 0;
-  abortCalls = 0;
-  isRunning = false;
-  thinkingLevel: ThinkingLevel = 'medium';
-  model: AvailableModel = availableModels[0]!;
+  readonly messages: ExecutionMessage[] = [];
+  readonly listeners = new Set<(event: AgentSessionAdapterEvent) => void>();
   sessionName: string | null = null;
-  activeAssistant: Extract<ChatMessage, { role: 'assistant' }> | null = null;
-  readonly pendingMessages: PendingMessage[] = [];
-  readonly availableThinkingLevels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
-  private timestamp = 1;
-  private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
+  lastEditedEntryId: string | null = null;
+  running = false;
 
-  /** @param id - 会话标识 */
+  /** @param id - Pi 会话标识 */
   constructor(readonly id: string) {}
 
-  /**
-   * 接受用户提示并发出 Pi 原生消息生命周期事件。
-   *
-   * @param text - 用户消息文本
-   * @returns 提示被接受后解决的 Promise
-   */
-  prompt = vi.fn(async (text: string): Promise<void> => {
-    this.promptTexts.push(text);
-    this.isRunning = true;
-    const message: ChatMessage = { role: 'user', content: text, timestamp: this.timestamp++ };
-    this.messages.push(message);
+  /** @param text - 用户提示 */
+  async prompt(text: string): Promise<void> {
+    this.running = true;
+    const message: AgentMessage = { role: 'user', content: text, timestamp: Date.now() };
     this.emit({ type: 'agent_start' });
     this.emit({ type: 'message_start', message });
     this.emit({ type: 'message_end', message });
-  });
+  }
 
-  /** @param text - 待处理文本 @returns 新消息 */
-  enqueuePendingMessage = (text: string): void => {
-    const message = { id: `pending-${this.pendingMessages.length + 1}`, text };
-    this.pendingMessages.push(message);
-    this.emit({ type: 'pending_messages_changed', pendingMessages: [...this.pendingMessages] });
-  };
+  /** @param text - 待处理文本 */
+  enqueuePendingMessage(text: string): void {
+    this.emit({ type: 'pending_messages_changed', pendingMessages: [{ id: 'pending-a', text }] });
+  }
 
-  /** @param messageId - 消息标识 @returns 无返回值 */
-  steerPendingMessage = async (messageId: string): Promise<void> => {
-    this.removePendingMessage(messageId);
-  };
-
-  /** @param messageId - 消息标识 @returns 无返回值 */
-  removePendingMessage = (messageId: string): void => {
-    const index = this.pendingMessages.findIndex((message) => message.id === messageId);
-    if (index >= 0) this.pendingMessages.splice(index, 1);
-    this.emit({ type: 'pending_messages_changed', pendingMessages: [...this.pendingMessages] });
-  };
-
-  /** @returns 全部待处理文本 */
-  takePendingMessages = (): string[] => {
-    const texts = this.pendingMessages.map((message) => message.text);
-    this.pendingMessages.splice(0);
-    this.emit({ type: 'pending_messages_changed', pendingMessages: [] });
-    return texts;
-  };
-
-  /**
-   * 订阅测试会话的 Pi JSON 事件。
-   *
-   * @param listener - 事件回调
-   * @returns 退订函数
-   */
-  subscribe = (listener: (event: AgentStreamEvent) => void): (() => void) => {
+  /** @returns 无返回值 */
+  async steerPendingMessage(): Promise<void> {}
+  /** @returns 无返回值 */
+  removePendingMessage(): void {}
+  /** @returns 空待处理列表 */
+  takePendingMessages(): string[] {
+    return [];
+  }
+  /** @param listener - 监听器 @returns 退订函数 */
+  subscribe(listener: (event: AgentSessionAdapterEvent) => void): () => void {
     this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
-
-  /**
-   * 读取测试会话消息。
-   *
-   * @returns 消息副本
-   */
-  getMessages = (): SessionMessage[] =>
-    this.messages.map((message, index) => ({ entryId: `entry-${index + 1}`, message }));
-
-  /** @param entryId - 最后一条用户消息标识 @param text - 修改文本 @returns 新分支历史 */
-  editAndResend = vi.fn(async (entryId: string, text: string): Promise<SessionMessage[]> => {
-    const userIndex = this.messages.findLastIndex((message) => message.role === 'user');
-    if (entryId !== `entry-${userIndex + 1}`) throw new Error('消息已经变化');
-    this.messages.splice(userIndex);
+    return () => this.listeners.delete(listener);
+  }
+  /** @returns Pi 执行历史 */
+  getExecutionHistory(): ExecutionMessage[] {
+    return structuredClone(this.messages);
+  }
+  /** @param entryId - Pi entry @param text - 新文本 @returns 无返回值 */
+  async editAndResend(entryId: string, text: string): Promise<void> {
+    this.lastEditedEntryId = entryId;
     await this.prompt(text);
-    return this.getMessages();
-  });
-
-  /**
-   * 读取测试会话状态。
-   *
-   * @returns 当前运行状态和思考等级
-   */
-  getState = (): AgentSessionState => ({
-    sessionName: this.sessionName,
-    isRunning: this.isRunning,
-    activeCompaction: null,
-    pendingMessages: [...this.pendingMessages],
-    thinkingLevel: this.thinkingLevel,
-    availableThinkingLevels: [...this.availableThinkingLevels],
-    model: this.model,
-    availableModels: [...availableModels],
-    modelWarning: null,
-  });
-
-  /** @returns 当前测试会话的权威恢复快照 */
-  getSnapshot = (): SessionSnapshotEvent => ({
-    type: 'session_snapshot',
-    messages: this.getMessages(),
-    activeAssistant: this.activeAssistant,
-    state: this.getState(),
-  });
-
+  }
+  /** @returns 会话状态 */
+  getState(): AgentSessionState {
+    return {
+      sessionName: this.sessionName,
+      executionAvailable: true,
+      isRunning: this.running,
+      activeCompaction: null,
+      pendingMessages: [],
+      thinkingLevel: 'medium',
+      availableThinkingLevels: ['off', 'medium'],
+      model,
+      availableModels: [model],
+      modelWarning: null,
+    };
+  }
+  /** @returns 不含产品历史的状态快照 */
+  getSnapshot() {
+    return { type: 'session_snapshot' as const, state: this.getState() };
+  }
   /** @param title - 新标题 */
-  setSessionName = vi.fn((title: string): void => {
+  setSessionName(title: string): void {
     this.sessionName = title;
     this.emit({ type: 'session_info_changed', name: title });
-  });
-
-  /**
-   * 中止当前运行。
-   *
-   * @returns 操作完成后的 Promise
-   */
-  abort = vi.fn(async (): Promise<string[]> => {
-    this.abortCalls += 1;
-    const restoredTexts = this.takePendingMessages();
-    this.isRunning = false;
+  }
+  /** @returns 未处理文本 */
+  async abort(): Promise<string[]> {
+    this.running = false;
     this.emit({ type: 'agent_settled' });
-    return restoredTexts;
-  });
-
-  /**
-   * 设置测试会话思考等级。
-   *
-   * @param level - 新思考等级
-   * @returns 更新后的会话状态
-   */
-  setThinkingLevel = vi.fn(async (level: ThinkingLevel): Promise<AgentSessionState> => {
-    this.thinkingLevel = level;
-    this.emit({ type: 'thinking_level_changed', level });
+    return [];
+  }
+  /** @param level - 思考等级 @returns 状态 */
+  async setThinkingLevel(level: ThinkingLevel): Promise<AgentSessionState> {
+    void level;
     return this.getState();
-  });
-
-  /**
-   * 设置测试会话模型并广播权威状态。
-   *
-   * @param reference - 跨 Provider 模型引用
-   * @returns 更新后的会话状态
-   */
-  setModel = vi.fn(async (reference: ModelReference): Promise<AgentSessionState> => {
-    const model = availableModels.find(
-      (candidate) => candidate.provider === reference.provider && candidate.id === reference.id
-    );
-    if (!model) throw new Error('模型不可用');
-    this.model = model;
-    const state = this.getState();
-    this.emit({ type: 'session_model_changed', state });
-    return state;
-  });
-
-  /**
-   * 记录会话释放次数。
-   *
-   * @returns 操作完成后的 Promise
-   */
-  dispose = vi.fn(async (): Promise<void> => {
-    this.disposeCalls += 1;
-  });
-
-  /** @param text - 快照中已经生成的助手文本 */
-  startAssistant(text: string): void {
-    this.isRunning = true;
-    this.activeAssistant = assistantMessage(text, this.timestamp++, 'pending');
   }
-
-  /** @param delta - 重连后继续产生的文本增量 */
-  appendAssistantDelta(delta: string): void {
-    const current = this.activeAssistant;
-    if (!current) throw new Error('助手消息尚未开始');
-    const text = current.content
-      .filter((content) => content.type === 'text')
-      .map((content) => content.text)
-      .join('');
-    this.activeAssistant = assistantMessage(text + delta, current.timestamp, 'pending');
-    this.emit({
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta },
-    });
+  /** @returns 状态 */
+  async setModel(): Promise<AgentSessionState> {
+    return this.getState();
   }
-
-  /**
-   * 模拟完整的 Pi 助手文本流。
-   *
-   * @param text - 助手回复文本
-   * @param stopReason - 最终结束原因
-   * @returns 无返回值
-   */
-  simulateAssistant(text: string, stopReason: 'stop' | 'aborted' = 'stop'): void {
-    const timestamp = this.timestamp++;
-    const startMessage = assistantMessage('', timestamp, 'pending');
-    this.activeAssistant = startMessage;
-    this.emit({ type: 'message_start', message: startMessage });
-    this.emit({
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_start', contentIndex: 0 },
-    });
-    for (const char of text) {
-      const currentText =
-        this.activeAssistant?.content
-          .filter((content) => content.type === 'text')
-          .map((content) => content.text)
-          .join('') ?? '';
-      this.activeAssistant = assistantMessage(currentText + char, timestamp, 'pending');
-      this.emit({
-        type: 'message_update',
-        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: char },
-      });
-    }
-    this.emit({
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: text },
-    });
-    const message = assistantMessage(text, timestamp, stopReason);
-    this.messages.push(message);
-    this.activeAssistant = null;
-    this.emit({ type: 'message_end', message });
-    this.isRunning = false;
-    this.emit({ type: 'agent_end', messages: [message], willRetry: false });
-    this.emit({ type: 'agent_settled' });
-  }
-
-  /**
-   * 向测试订阅者发送 Pi JSON 事件。
-   *
-   * @param event - Pi JSON 会话事件
-   * @returns 无返回值
-   */
-  emit(event: AgentStreamEvent): void {
-    for (const listener of this.listeners) {
-      listener(event);
-    }
+  /** @returns 无返回值 */
+  async dispose(): Promise<void> {}
+  /** @param event - Pi 或产品状态事件 */
+  emit(event: AgentSessionAdapterEvent): void {
+    for (const listener of this.listeners) listener(event);
   }
 }
 
-/**
- * 创建可控的测试 Agent Hub。
- *
- * @returns Agent Hub、创建的会话和会话配置记录
- */
-export function makeFakeHub(): {
-  hub: AgentHubAdapter;
-  sessions: FakeSession[];
-  createOptions: ModelConfig[];
-} {
-  const sessions: FakeSession[] = [];
-  const createOptions: ModelConfig[] = [];
-  const archivedSessionIds = new Set<string>();
-  const deletedSessionIds = new Set<string>();
-  let nextSessionId = 1;
-
-  /** @param sessionId - 会话标识 @returns 已有或新建的测试会话 */
-  const getOrCreateSession = (sessionId: string): FakeSession => {
-    const existing = sessions.find((session) => session.id === sessionId);
-    if (existing) return existing;
-    const session = new FakeSession(sessionId);
-    sessions.push(session);
-    return session;
-  };
-
+/** @returns 可控 Hub 适配器与会话 */
+export function makeFakeHub(): { hub: AgentHubAdapter; sessions: FakeSession[] } {
+  const sessions = [new FakeSession('pi-session-1')];
+  let next = 2;
   const hub: AgentHubAdapter = {
+    clearLegacySessions: vi.fn(async () => {}),
     listProviders: vi.fn(async () => [{ id: 'anthropic', name: 'Anthropic' }]),
-    listModels: vi.fn(async (providerId) =>
-      providerId === 'anthropic' ? [{ id: 'claude-a', name: 'Claude A' }] : []
-    ),
-    testConnection: vi.fn(
-      async (_provider: string, apiKey: string): Promise<TestConnectionResult> =>
-        apiKey === 'good' ? { ok: true } : { ok: false, message: '401 凭证无效' }
-    ),
-    listSessions: vi.fn(async () =>
-      sessions.map((session) => ({
-        id: session.id,
-        name: session.sessionName ?? undefined,
-        firstMessage:
-          session.messages.find((message) => message.role === 'user')?.content.toString() ?? '',
-        createdAt: session.createdAt,
-        updatedAt: session.messages.at(-1)?.timestamp ?? session.createdAt,
-        messageCount: session.messages.length,
-      }))
-    ),
-    createSession: vi.fn(async (options) => {
-      createOptions.push(options);
-      while (sessions.some((session) => session.id === `session-${nextSessionId}`)) {
-        nextSessionId += 1;
-      }
-      return getOrCreateSession(`session-${nextSessionId++}`);
-    }),
-    openSession: vi.fn(async (_options, sessionId) => {
-      if (archivedSessionIds.has(sessionId)) throw new SessionArchivedError(sessionId);
-      if (deletedSessionIds.has(sessionId)) throw new SessionNotFoundError(sessionId);
-      const session = new FakeSession(sessionId);
+    listModels: vi.fn(async () => [{ id: 'claude-a', name: 'Claude A' }]),
+    testConnection: vi.fn(async () => ({ ok: true as const })),
+    listSessions: vi.fn(async () => []),
+    createSession: vi.fn(async () => {
+      const session = new FakeSession(`pi-session-${next++}`);
       sessions.push(session);
       return session;
     }),
-    forkSession: vi.fn(async (_options, sourceSessionId, entryId, title) => {
-      const source = sessions.find((session) => session.id === sourceSessionId);
-      if (!source) throw new SessionNotFoundError(sourceSessionId);
-      const entryIndex = Number(entryId.replace('entry-', '')) - 1;
-      while (sessions.some((candidate) => candidate.id === `session-${nextSessionId}`)) {
-        nextSessionId += 1;
-      }
-      const session = new FakeSession(`session-${nextSessionId++}`);
-      session.messages.push(...source.messages.slice(0, entryIndex + 1));
-      session.sessionName = title;
+    openSession: vi.fn(async (_config, sessionId) => {
+      const session = sessions.find((item) => item.id === sessionId);
+      if (!session) throw new SessionNotFoundError(sessionId);
+      return session;
+    }),
+    forkSession: vi.fn(async () => {
+      const session = new FakeSession(`pi-session-${next++}`);
       sessions.push(session);
       return session;
     }),
-    archiveSession: vi.fn(async (sessionId) => {
-      archivedSessionIds.add(sessionId);
-      const index = sessions.findIndex((session) => session.id === sessionId);
-      if (index >= 0) sessions.splice(index, 1);
-    }),
-    deleteSession: vi.fn(async (sessionId) => {
-      deletedSessionIds.add(sessionId);
-      const index = sessions.findIndex((session) => session.id === sessionId);
-      if (index >= 0) sessions.splice(index, 1);
-    }),
+    archiveSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
   };
-  return { hub, sessions, createOptions };
+  return { hub, sessions };
 }
 
-/**
- * 在随机端口启动测试服务。
- *
- * @param hub - 测试 Agent Hub
- * @param configStore - 测试配置存储
- * @returns 服务地址与关闭函数
- */
+/** @param hub - 测试 Hub @param configStore - 配置 @returns 随机端口服务 */
 export async function startServer(
   hub: AgentHubAdapter,
-  configStore: FileConfigStore
-): Promise<{ baseUrl: string; close: () => Promise<void> }> {
-  const app: Express = createServer({ agentHub: createAgentHub(hub, configStore) });
+  configStore: FileConfigStore,
+  repository: ProductHistoryRepository = new MemoryHistoryRepository()
+): Promise<{
+  baseUrl: string;
+  history: ProductHistory;
+  agentHub: ReturnType<typeof createAgentHub>;
+  close: () => Promise<void>;
+}> {
+  const history = new ProductHistory(repository);
+  history.initialize();
+  history.beginCreate('session-1', 1);
+  history.completeCreate('session-1', 'pi-session-1');
+  const agentHub = createAgentHub(hub, configStore, history);
+  const app: Express = createServer({});
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
+  const closeRpc = attachRpcServer(server, agentHub);
   const { port } = server.address() as AddressInfo;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
-  };
-}
-
-/**
- * 打开 SSE 测试连接。
- *
- * @param baseUrl - 测试服务地址
- * @returns 逐帧读取事件和关闭连接的方法
- */
-export async function openEvents(
-  baseUrl: string,
-  sessionId = 'session-1'
-): Promise<{ nextEvent: (timeoutMs?: number) => Promise<AgentStreamEvent>; close: () => void }> {
-  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/events`);
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-type')).toContain('text/event-stream');
-
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  return {
-    async nextEvent(timeoutMs = 2000): Promise<AgentStreamEvent> {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const separator = buffer.indexOf('\n\n');
-        if (separator >= 0) {
-          const frame = buffer.slice(0, separator);
-          buffer = buffer.slice(separator + 2);
-          const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
-          expect(dataLine).toBeDefined();
-          return JSON.parse(dataLine!.slice(6)) as AgentStreamEvent;
-        }
-        if (Date.now() > deadline) {
-          throw new Error('等待 SSE 事件超时');
-        }
-        const result = await Promise.race<
-          { done: boolean; value?: Uint8Array } | { done?: undefined }
-        >([
-          reader.read(),
-          new Promise<{ done?: undefined }>((resolve) => setTimeout(() => resolve({}), 50)),
-        ]);
-        if (result.done === true) {
-          throw new Error('SSE 流已关闭');
-        }
-        if ('value' in result && result.value) {
-          buffer += decoder.decode(result.value, { stream: true });
-        }
-      }
-    },
-    close(): void {
-      void reader.cancel();
+    history,
+    agentHub,
+    close: async () => {
+      await closeRpc();
+      await agentHub.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
 }

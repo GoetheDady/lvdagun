@@ -1,6 +1,8 @@
 # 持久保存会话并通过不透明 ID 寻址
 
-会话使用 Pi 原生会话文件持久保存在 `~/.lvdagun/sessions/`,本地服务重启后仍可列出并继续。客户端只接收不透明会话 ID,通过 `/sessions/:sessionId` 独立选择当前会话;物理文件路径不跨越共享协议边界。Agent Hub 为每个已打开会话维护唯一的 Pi Runtime,因此多个客户端选择同一会话时共享消息与运行状态,选择不同会话时则不会混用上下文。
+**Status**: superseded in part by ADR-0014
+
+Pi 原生会话文件持久保存在 `~/.lvdagun/sessions/`，用于恢复执行上下文；产品会话历史与会话列表由 ADR-0014 定义的产品数据库持有。本地服务重启后仍可列出并继续会话。客户端只接收产品拥有的不透明会话 ID，通过 `/sessions/:sessionId` 独立选择当前会话；物理文件路径和 Pi 会话 ID 不跨越共享协议边界。Agent Hub 为每个已打开会话维护唯一的 Pi Runtime，因此多个客户端选择同一会话时共享历史与运行状态，选择不同会话时不会混用上下文。
 
 **Considered Options**:
 

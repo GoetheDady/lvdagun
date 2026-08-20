@@ -1,15 +1,38 @@
 import type {
+  AgentMessage,
+} from '@earendil-works/pi-agent-core';
+import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type {
   AgentSessionState,
   AgentStreamEvent,
   ModelReference,
   ModelConfig,
   ModelInfo,
   ProviderInfo,
-  SessionMessage,
   SessionSnapshotEvent,
   TestConnectionResult,
   ThinkingLevel,
 } from '@lvdagun/protocol';
+
+/** Pi 执行条目只在后端历史映射器内部使用。 */
+export interface ExecutionMessage {
+  entryId: string | null;
+  message: AgentMessage;
+}
+
+/** 单会话适配器发出的后端事件，不跨越 JSON-RPC 边界。 */
+export type AgentSessionAdapterEvent =
+  | AgentSessionEvent
+  | Extract<
+      AgentStreamEvent,
+      {
+        type:
+          | 'session_model_changed'
+          | 'pending_messages_changed'
+          | 'session_info_changed'
+          | 'thinking_level_changed';
+      }
+    >;
 
 /** Agent 正在运行，当前操作不能与之并发 */
 export class AgentBusyError extends Error {
@@ -19,17 +42,6 @@ export class AgentBusyError extends Error {
   constructor() {
     super('Agent 正在运行');
     this.name = 'AgentBusyError';
-  }
-}
-
-/** Agent 已经停止，待处理消息不能再调整当前方向 */
-export class AgentNotRunningError extends Error {
-  readonly status = 409;
-
-  /** 创建 Agent 未运行错误。 */
-  constructor() {
-    super('Agent 已停止，消息仍在待处理区');
-    this.name = 'AgentNotRunningError';
   }
 }
 
@@ -124,14 +136,14 @@ export interface AgentSessionAdapter {
    * @param listener - 事件回调
    * @returns 退订函数
    */
-  subscribe(listener: (event: AgentStreamEvent) => void): () => void;
+  subscribe(listener: (event: AgentSessionAdapterEvent) => void): () => void;
 
   /**
    * 读取 Pi 当前会话的全部结构化消息。
    *
    * @returns 消息历史副本
    */
-  getMessages(): SessionMessage[];
+  getExecutionHistory(): ExecutionMessage[];
 
   /**
    * 编辑当前分支最后一条用户消息并重新开始 Agent 运行。
@@ -140,7 +152,7 @@ export interface AgentSessionAdapter {
    * @param text - 修改后的非空文本
    * @returns 提示被接受后的当前分支历史
    */
-  editAndResend(entryId: string, text: string): Promise<SessionMessage[]>;
+  editAndResend(entryId: string, text: string): Promise<void>;
 
   /**
    * 读取当前 Agent 运行与思考等级状态。
@@ -154,7 +166,7 @@ export interface AgentSessionAdapter {
    *
    * @returns 建立订阅时的权威会话快照
    */
-  getSnapshot(): SessionSnapshotEvent;
+  getSnapshot(): Omit<SessionSnapshotEvent, 'history'>;
 
   /**
    * 设置 Pi 持久化会话标题。
@@ -208,6 +220,8 @@ interface StoredSessionSummary {
 
 /** Agent Hub 内部依赖的持久化与 Pi Runtime 适配器接口。 */
 export interface AgentHubAdapter {
+  /** @returns 清空切换前遗留的活动与归档 Pi 会话 */
+  clearLegacySessions(): Promise<void>;
   /**
    * 列出可配置的模型服务商。
    *

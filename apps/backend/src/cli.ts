@@ -12,10 +12,13 @@ import { join } from 'node:path';
 import { DEFAULT_SERVICE_PORT, DEV_WEB_PORT, SERVICE_HOST } from '@lvdagun/protocol';
 
 import { FileConfigStore } from './config/config-store';
-import { CONFIG_FILE, DATA_DIR } from './config/paths';
+import { CONFIG_FILE, DATA_DIR, HISTORY_DATABASE_FILE } from './config/paths';
+import { ProductHistory } from './history/product-history';
+import { SqliteHistoryRepository } from './history/sqlite-history-repository';
 import { createPiAgentHubAdapter } from './hub/pi-agent-hub-adapter';
 import { createAgentHub } from './hub/agent-hub';
 import { createServer } from './http/server';
+import { attachRpcServer } from './http/rpc-server';
 
 const PID_FILE = join(DATA_DIR, 'serve.pid');
 
@@ -43,9 +46,21 @@ async function serve(): Promise<void> {
   // 生产模式托管 web 构建产物;dev 模式页面由 vite 提供,只开 API
   const webDist = join(import.meta.dirname, '../../web/dist');
   const configStore = new FileConfigStore(CONFIG_FILE);
-  const agentHub = createAgentHub(createPiAgentHubAdapter({ dataDir: DATA_DIR }), configStore);
+  const hubAdapter = createPiAgentHubAdapter({ dataDir: DATA_DIR });
+  const productHistory = new ProductHistory(new SqliteHistoryRepository(HISTORY_DATABASE_FILE));
+  productHistory.initialize();
+  if (productHistory.needsLegacySessionCutover()) {
+    await hubAdapter.clearLegacySessions();
+    productHistory.completeLegacySessionCutover();
+  }
+  const activePiSessionIds = new Set(
+    (await hubAdapter.listSessions()).map((session) => session.id)
+  );
+  await productHistory.recoverLifecycleIntents(activePiSessionIds, (sessionId) =>
+    hubAdapter.deleteSession(sessionId)
+  );
+  const agentHub = createAgentHub(hubAdapter, configStore, productHistory);
   const app = createServer({
-    agentHub,
     webDist: !isDev && existsSync(webDist) ? webDist : undefined,
   });
 
@@ -56,6 +71,7 @@ async function serve(): Promise<void> {
     void writeFile(PID_FILE, String(process.pid), { mode: 0o600 });
     openBrowser(url);
   });
+  const closeRpc = attachRpcServer(server, agentHub);
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
@@ -67,6 +83,7 @@ async function serve(): Promise<void> {
 
   // 优雅退出:关服务、清 pid 文件(SIGINT=Ctrl+C,SIGTERM=lvdagun stop)
   const shutdown = async (): Promise<void> => {
+    await closeRpc();
     server.close();
     await agentHub.dispose();
     await rm(PID_FILE, { force: true });

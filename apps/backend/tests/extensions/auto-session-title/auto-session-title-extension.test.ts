@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { AgentMessage as ChatMessage } from '@earendil-works/pi-agent-core';
 import type {
   ExtensionAPI,
   ExtensionContext,
   ModelRuntime,
   SessionEntry,
 } from '@earendil-works/pi-coding-agent';
-import type { ChatMessage } from '@lvdagun/protocol';
 
 import { createAutoSessionTitleExtension } from '../../../src/extensions/auto-session-title/auto-session-title-extension';
 

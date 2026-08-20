@@ -4,6 +4,12 @@
 
 磁盘资源目录中的外部 Extensions 继续保持关闭;显式加载内置 Extension 不表示开放 Extension 发现或预先建设外部扩展基础设施。待处理消息一旦移交给 Pi,即视为已经开始处理,不再允许取回或删除。
 
+待处理消息由一个完整 module 统一拥有:内部集中稳定 ID 队列、状态订阅、向 Pi 调整方向或排队移交、Agent 结束后的自动出队,以及停止时对驴打滚队列与 Pi 队列的协调。Agent Hub 只装配其隐藏 Extension,会话适配器只通过该 module 的产品接口执行用户命令和读取快照,不再注册或解释待处理消息的 Pi 生命周期事件。本次完整化只调整所有权和执行线路,不改变当时的传输、错误语义、先进先出顺序或客户端交互,也不增加持久化、编辑、排序等能力;传输随后由 ADR-0013 整体替换。
+
+module 同时提供给 Pi ResourceLoader 的隐藏 Extension 装配项和给会话适配器使用的待处理消息操作。Extension 必须在 `agent_end` 中移交下一条 `followUp`:Pi 会在该 handler 返回后检查新队列并自然续跑,而 `agent_settled` 已经表示全部续跑完成,不能用于自动出队。只有本次结束消息包含成功助手回复时才移交;错误、取消或待重试状态保留队列。Runtime 重绑时保留同一 module 内的待处理消息,只替换 Pi session 引用。Agent Hub 先装配待处理消息 Extension,再装配只在最终 `agent_settled` 后工作的自动标题 Extension,使执行顺序明确为先完成全部排队运行,再执行会话收尾。
+
+module 通过工厂创建并以闭包隐藏实现,只公开隐藏 Extension 装配项、待处理消息操作、快照和订阅 interface,以及“消息不存在”和“Agent 未运行”两个领域错误。调整方向时由 module 根据绑定的 Pi session 校验 Agent 仍在运行;`session_shutdown` 只解除旧 session 引用,不清空消息,新 Runtime 创建后再绑定新 session。待处理消息变化继续通过 module 订阅交给会话适配器,由 `pending_messages_changed` 会话事件同步客户端,不写入 Pi 会话历史或引入 Event Bus。
+
 **Considered Options**:
 
 - 直接使用 Pi 原生队列:能够排队和整队清空,但消息没有稳定身份,无法可靠支持逐条调整方向和删除。

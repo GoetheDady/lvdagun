@@ -3,7 +3,7 @@ import type { AgentStreamEvent } from '@lvdagun/protocol';
 import type { ChatSessionAction } from '@/state/chat-session-state';
 import { operationFailedAction } from '@/state/chat-session-state';
 import { api } from '@/services/api-client';
-import { subscribeEvents } from '@/services/event-stream';
+import { subscribeEvents } from '@/services/session-events';
 
 const RECONNECT_NOTICE_DELAY_MS = 1_000;
 
@@ -12,7 +12,7 @@ const RECONNECT_NOTICE_DELAY_MS = 1_000;
  *
  * @param sessionId - 当前会话标识
  * @param dispatch - 客户端会话状态机入口
- * @returns 关闭 SSE、计时器和后续历史读取的函数
+ * @returns 关闭订阅、计时器和后续历史读取的函数
  */
 export function connectSessionRecovery(
   sessionId: string,
@@ -22,14 +22,14 @@ export function connectSessionRecovery(
   let unsubscribe: (() => void) | null = null;
   let reconnectNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** 收敛 SSE 临时消息与服务端持久化历史中的稳定条目标识。 */
+  /** 收敛实时临时消息与服务端持久化历史中的稳定条目标识。 */
   const convergeHistory = (): void => {
     void api
       .getMessages(sessionId)
       .then((messages) => {
-        if (!closed) dispatch({ type: 'history_loaded', messages });
+        if (!closed) dispatch({ type: 'history_loaded', history: messages });
       })
-      // SSE 已经给出完整可用状态；历史收敛失败时保留当前展示，等待下一次快照校准。
+      // 实时订阅已经给出完整可用状态；历史收敛失败时保留当前展示，等待下一次快照校准。
       .catch(() => undefined);
   };
 
@@ -41,7 +41,7 @@ export function connectSessionRecovery(
           clearTimeout(reconnectNoticeTimer);
           reconnectNoticeTimer = null;
         }
-        dispatch({ type: 'pi_event', event, receivedAt: Date.now() });
+        dispatch({ type: 'product_event', event });
 
         if (isTerminalSessionEvent(event)) {
           unsubscribe?.();
@@ -71,7 +71,7 @@ export function connectSessionRecovery(
   };
 }
 
-/** @param event - SSE 会话事件 @returns 是否应停止当前连接 */
+/** @param event - 实时会话事件 @returns 是否应停止当前订阅 */
 function isTerminalSessionEvent(event: AgentStreamEvent): boolean {
   return (
     event.type === 'session_archived' ||
@@ -80,10 +80,7 @@ function isTerminalSessionEvent(event: AgentStreamEvent): boolean {
   );
 }
 
-/** @param event - SSE 会话事件 @returns 是否需要重新读取持久化历史 */
+/** @param event - 实时会话事件 @returns 是否需要重新读取持久化历史 */
 function requiresHistoryConvergence(event: AgentStreamEvent): boolean {
-  return (
-    event.type === 'agent_settled' ||
-    (event.type === 'compaction_end' && event.result !== undefined && !event.aborted)
-  );
+  return event.type === 'session_history_changed';
 }

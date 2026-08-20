@@ -6,3 +6,6 @@ export const DATA_DIR = join(homedir(), '.lvdagun');
 
 /** 模型配置文件路径 */
 export const CONFIG_FILE = join(DATA_DIR, 'config.json');
+
+/** 产品会话历史 SQLite 文件路径 */
+export const HISTORY_DATABASE_FILE = join(DATA_DIR, 'history.sqlite');

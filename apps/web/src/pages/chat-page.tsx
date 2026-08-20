@@ -11,7 +11,7 @@ import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useChatSession } from '@/hooks/use-chat-session';
-import { selectEditableUserEntryId, selectSessionTitle } from '@/state/chat-session-selectors';
+import { selectEditableUserItemId, selectSessionTitle } from '@/state/chat-session-selectors';
 import type { SessionUnavailableReason } from '@/state/chat-session-state';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 
@@ -161,22 +161,18 @@ function ChatWorkspace({
   const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState<{
-    entryId: string;
+    itemId: string;
     draft: string;
     submitting: boolean;
   } | null>(null);
-  const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
+  const [forkingRunId, setForkingRunId] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLElement>(null);
   const followsOutputRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const hasTranscript =
-    state.messages.length > 0 ||
-    state.activeAssistant !== null ||
-    state.retries.length > 0 ||
-    state.compaction !== null;
+  const hasTranscript = (state.history?.runs.length ?? 0) > 0;
   const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
   const sessionTitle = selectSessionTitle(state, sidebarTitle);
-  const editableUserEntryId = selectEditableUserEntryId(state);
+  const editableUserItemId = selectEditableUserItemId(state);
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
@@ -187,12 +183,8 @@ function ChatWorkspace({
       bottomRef.current?.scrollIntoView({ behavior: state.isRunning ? 'smooth' : 'auto' });
     }
   }, [
-    state.activeAssistant,
-    state.compaction,
+    state.history,
     state.isRunning,
-    state.messages,
-    state.retries,
-    state.toolRuns,
   ]);
 
   useEffect(() => {
@@ -213,7 +205,6 @@ function ChatWorkspace({
     if (
       !text ||
       state.sending ||
-      state.compaction?.status === 'running' ||
       state.settingModel ||
       state.settingThinkingLevel ||
       editing !== null
@@ -226,18 +217,14 @@ function ChatWorkspace({
     });
   };
 
-  const inputPlaceholder = editing
-    ? '正在编辑历史消息'
-    : state.compaction?.status === 'running'
-      ? '正在压缩上下文'
-      : '输入消息';
+  const inputPlaceholder = editing ? '正在编辑历史消息' : '输入消息';
 
   /** 从一条已完成的助手回复创建会话并切换过去。 */
-  const handleFork = (entryId: string): void => {
-    if (forkingEntryId !== null) return;
-    setForkingEntryId(entryId);
-    void forkSession(entryId).then(async (forkedSessionId) => {
-      setForkingEntryId(null);
+  const handleFork = (runId: string): void => {
+    if (forkingRunId !== null) return;
+    setForkingRunId(runId);
+    void forkSession(runId).then(async (forkedSessionId) => {
+      setForkingRunId(null);
       if (!forkedSessionId) return;
       await refreshSessionList();
       navigate(`/sessions/${encodeURIComponent(forkedSessionId)}`);
@@ -247,13 +234,13 @@ function ChatWorkspace({
   /** 提交原位编辑；失败时保留草稿和旧分支供重试。 */
   const handleSubmitEdit = (): void => {
     if (!editing || editing.submitting || !editing.draft.trim()) return;
-    const { entryId, draft } = editing;
-    setEditing({ entryId, draft, submitting: true });
-    void editAndResend(entryId, draft).then((accepted) => {
+    const { itemId, draft } = editing;
+    setEditing({ itemId, draft, submitting: true });
+    void editAndResend(itemId, draft).then((accepted) => {
       if (accepted) {
         setEditing(null);
       } else {
-        setEditing({ entryId, draft, submitting: false });
+        setEditing({ itemId, draft, submitting: false });
       }
     });
   };
@@ -271,11 +258,9 @@ function ChatWorkspace({
             />
             {state.showReconnectNotice
               ? '正在重新连接'
-              : state.compaction?.status === 'running'
-                ? '压缩中'
-                : state.isRunning
-                  ? '运行中'
-                  : '就绪'}
+              : state.isRunning
+                ? '运行中'
+                : '就绪'}
           </p>
         </div>
       </header>
@@ -312,17 +297,13 @@ function ChatWorkspace({
             </div>
           ) : (
             <ChatTranscript
-              messages={state.messages}
-              activeAssistant={state.activeAssistant}
-              toolRuns={state.toolRuns}
-              retries={state.retries}
-              compaction={state.compaction}
+              history={state.history}
               loading={state.loading}
-              editableUserEntryId={editableUserEntryId}
+              editableUserItemId={editableUserItemId}
               editing={editing}
-              forkingEntryId={forkingEntryId}
-              actionsDisabled={!state.synchronized}
-              onStartEdit={(entryId, draft) => setEditing({ entryId, draft, submitting: false })}
+              forkingRunId={forkingRunId}
+              actionsDisabled={!state.synchronized || state.session?.executionAvailable === false}
+              onStartEdit={(itemId, draft) => setEditing({ itemId, draft, submitting: false })}
               onEditDraftChange={(draft) =>
                 setEditing((current) => (current ? { ...current, draft } : null))
               }
@@ -355,8 +336,13 @@ function ChatWorkspace({
           >
             <PendingMessages
               messages={state.session?.pendingMessages ?? []}
-              disabled={state.aborting || editing !== null || !state.synchronized}
-              steerDisabled={!state.isRunning || state.compaction?.status === 'running'}
+              disabled={
+                state.aborting ||
+                editing !== null ||
+                !state.synchronized ||
+                state.session?.executionAvailable === false
+              }
+              steerDisabled={!state.isRunning}
               onSteer={(messageId) => void steerPendingMessage(messageId)}
               onRemove={(messageId) => void removePendingMessage(messageId)}
               onTakeAll={() => {
@@ -371,7 +357,9 @@ function ChatWorkspace({
               placeholder={inputPlaceholder}
               rows={2}
               value={input}
-              disabled={state.loading || editing !== null}
+              disabled={
+                state.loading || editing !== null || state.session?.executionAvailable === false
+              }
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -388,6 +376,7 @@ function ChatWorkspace({
                     models={state.session.availableModels}
                     disabled={
                       !state.synchronized ||
+                      state.session?.executionAvailable === false ||
                       state.isRunning ||
                       state.settingModel ||
                       state.settingThinkingLevel ||
@@ -403,6 +392,7 @@ function ChatWorkspace({
                     levels={state.session.availableThinkingLevels}
                     disabled={
                       !state.synchronized ||
+                      state.session?.executionAvailable === false ||
                       state.isRunning ||
                       state.settingModel ||
                       editing !== null
@@ -417,8 +407,8 @@ function ChatWorkspace({
                   size="icon"
                   variant="outline"
                   disabled={state.aborting}
-                  title={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
-                  aria-label={state.compaction?.status === 'running' ? '停止压缩' : '停止'}
+                      title="停止"
+                      aria-label="停止"
                   onClick={() => {
                     void abort().then((texts) => {
                       setInput((draft) => prependDraft(texts, draft));
@@ -441,6 +431,7 @@ function ChatWorkspace({
                     state.settingThinkingLevel ||
                     state.loading ||
                     !state.synchronized ||
+                    state.session?.executionAvailable === false ||
                     editing !== null
                   }
                   title="发送"

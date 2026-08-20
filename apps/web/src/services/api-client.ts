@@ -1,7 +1,5 @@
 /** @file 客户端普通 HTTP 请求的唯一入口 */
 import {
-  API_PATHS,
-  sessionApiPaths,
   type AbortSessionResult,
   type AgentSessionState,
   type CreateSessionResult,
@@ -12,143 +10,76 @@ import {
   type ModelReference,
   type ProviderInfo,
   type SessionSummary,
-  type SessionMessage,
+  type ProductSessionHistory,
   type TakePendingMessagesResult,
   type TestConnectionResult,
   type ThinkingLevel,
 } from '@lvdagun/protocol';
+import { getRpcConnection } from '@/services/rpc-client';
 
-/** 本地服务返回的带 HTTP 状态码的请求错误。 */
-class ApiError extends Error {
-  /**
-   * 创建接口错误。
-   *
-   * @param status - HTTP 状态码
-   * @param message - 服务端错误说明
-   */
-  constructor(
-    readonly status: number,
-    message: string
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
-
-/**
- * 发起 HTTP 请求，并把非成功响应转换为错误。
- *
- * @param path - 接口路径
- * @param init - Fetch 请求配置
- * @returns 解析后的响应体
- * @throws 网络失败或本地服务返回错误
- */
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new ApiError(response.status, body?.error ?? `请求失败(${response.status})`);
-  }
-  if (response.status === 202 || response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
-}
-
-/** 本地服务 HTTP 接口集合 */
+/** 本地服务 JSON-RPC 操作集合 */
 export const api = {
-  getConfig: (): Promise<ModelConfig | null> => request(API_PATHS.config),
+  getConfig: (): Promise<ModelConfig | null> => getRpcConnection().request('config/get'),
 
   saveConfig: (config: ModelConfig): Promise<void> =>
-    request(API_PATHS.config, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(config),
-    }),
+    getRpcConnection().request('config/update', config),
 
   testConnection: (provider: string, apiKey: string): Promise<TestConnectionResult> =>
-    request(API_PATHS.testConnection, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey }),
-    }),
+    getRpcConnection().request('catalog/testConnection', { provider, apiKey }),
 
-  listProviders: (): Promise<ProviderInfo[]> => request(API_PATHS.providers),
+  listProviders: (): Promise<ProviderInfo[]> => getRpcConnection().request('catalog/listProviders'),
 
   listModels: (provider: string): Promise<ModelInfo[]> =>
-    request(`${API_PATHS.models}?provider=${encodeURIComponent(provider)}`),
+    getRpcConnection().request('catalog/listModels', { provider }),
 
-  listSessions: (): Promise<SessionSummary[]> => request(API_PATHS.sessions),
+  listSessions: (): Promise<SessionSummary[]> => getRpcConnection().request('session/list'),
 
-  createSession: (): Promise<CreateSessionResult> =>
-    request(API_PATHS.sessions, { method: 'POST' }),
+  createSession: (): Promise<CreateSessionResult> => getRpcConnection().request('session/create'),
 
   archiveSession: (sessionId: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).archive, { method: 'POST' }),
+    getRpcConnection().request('session/archive', { sessionId }),
 
   deleteSession: (sessionId: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).state, { method: 'DELETE' }),
+    getRpcConnection().request('session/delete', { sessionId }),
 
   setSessionTitle: (sessionId: string, title: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).title, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title }),
-    }),
+    getRpcConnection().request('session/rename', { sessionId, title }),
 
-  getMessages: (sessionId: string): Promise<SessionMessage[]> =>
-    request(sessionApiPaths(sessionId).messages),
+  getMessages: (sessionId: string): Promise<ProductSessionHistory> =>
+    getRpcConnection().request('session/messages', { sessionId }),
 
-  forkSession: (sessionId: string, entryId: string): Promise<ForkSessionResult> =>
-    request(sessionApiPaths(sessionId).forks, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ entryId }),
-    }),
+  forkSession: (sessionId: string, runId: string): Promise<ForkSessionResult> =>
+    getRpcConnection().request('session/fork', { sessionId, runId }),
 
-  editAndResend: (sessionId: string, entryId: string, text: string): Promise<EditResendResult> =>
-    request(sessionApiPaths(sessionId).editResend(entryId), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text }),
-    }),
+  editAndResend: (sessionId: string, itemId: string, text: string): Promise<EditResendResult> =>
+    getRpcConnection().request('session/editResend', { sessionId, itemId, text }),
 
   getSessionState: (sessionId: string): Promise<AgentSessionState> =>
-    request(sessionApiPaths(sessionId).state),
+    getRpcConnection().request('session/state', { sessionId }),
 
   prompt: (sessionId: string, text: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).prompt, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text }),
-    }),
+    getRpcConnection()
+      .request('session/prompt', { sessionId, text })
+      .then(() => undefined),
 
   abortSession: (sessionId: string): Promise<AbortSessionResult> =>
-    request(sessionApiPaths(sessionId).abort, { method: 'POST' }),
+    getRpcConnection().request('session/abort', { sessionId }),
 
   steerPendingMessage: (sessionId: string, messageId: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).pendingMessageSteer(messageId), { method: 'POST' }),
+    getRpcConnection().request('session/pending/steer', { sessionId, messageId }),
 
   removePendingMessage: (sessionId: string, messageId: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).pendingMessage(messageId), { method: 'DELETE' }),
+    getRpcConnection().request('session/pending/remove', { sessionId, messageId }),
 
   takePendingMessages: (sessionId: string): Promise<TakePendingMessagesResult> =>
-    request(sessionApiPaths(sessionId).pendingMessagesTake, { method: 'POST' }),
+    getRpcConnection().request('session/pending/take', { sessionId }),
 
   discardPendingMessages: (sessionId: string): Promise<void> =>
-    request(sessionApiPaths(sessionId).pendingMessages, { method: 'DELETE' }),
+    getRpcConnection().request('session/pending/discard', { sessionId }),
 
   setThinkingLevel: (sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> =>
-    request(sessionApiPaths(sessionId).thinkingLevel, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ level }),
-    }),
+    getRpcConnection().request('session/thinkingLevel', { sessionId, level }),
 
   setSessionModel: (sessionId: string, model: ModelReference): Promise<AgentSessionState> =>
-    request(sessionApiPaths(sessionId).model, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(model),
-    }),
+    getRpcConnection().request('session/model', { sessionId, model }),
 };

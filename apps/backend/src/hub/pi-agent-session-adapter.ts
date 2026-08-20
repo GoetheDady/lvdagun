@@ -7,29 +7,27 @@ import { sessionEntryToContextMessages } from '@earendil-works/pi-coding-agent';
 import type {
   ActiveCompaction,
   AgentSessionState,
-  AgentStreamEvent,
   AvailableModel,
   ModelReference,
-  SessionMessage,
   SessionSnapshotEvent,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 
-import type { PendingMessageController } from '../extensions/pending-messages/pending-message-controller';
+import type { PendingMessageExtension } from '../extensions/pending-messages/pending-message-extension';
 import {
   AgentBusyError,
-  AgentNotRunningError,
   ModelUnavailableError,
   SessionEntryConflictError,
   type AgentSessionAdapter,
+  type AgentSessionAdapterEvent,
+  type ExecutionMessage,
 } from './agent-hub-adapter';
-import { toJsonAgentEvent } from './pi-json-event';
 
 /** 使用 Pi AgentSessionRuntime 的 Hub 会话实现 */
 export class PiAgentSessionAdapter implements AgentSessionAdapter {
   readonly id: string;
   readonly createdAt: number;
-  private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
+  private readonly listeners = new Set<(event: AgentSessionAdapterEvent) => void>();
   private activeCompaction: ActiveCompaction | null = null;
   private modelWarning: string | null;
   private unsubscribeSession: (() => void) | null = null;
@@ -43,7 +41,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
    */
   constructor(
     private readonly runtime: AgentSessionRuntime,
-    private readonly pendingMessages: PendingMessageController,
+    private readonly pendingMessages: PendingMessageExtension,
     modelWarning: string | null = null
   ) {
     this.modelWarning = modelWarning;
@@ -65,7 +63,6 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
 
   /** @param messageId - 待处理消息标识 @returns Pi 接受后解决的 Promise */
   async steerPendingMessage(messageId: string): Promise<void> {
-    if (this.runtime.session.isIdle) throw new AgentNotRunningError();
     await this.pendingMessages.steer(messageId);
   }
 
@@ -119,7 +116,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
    * @param listener - 事件回调
    * @returns 退订函数
    */
-  subscribe(listener: (event: AgentStreamEvent) => void): () => void {
+  subscribe(listener: (event: AgentSessionAdapterEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -134,7 +131,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
    *
    * @returns 当前分支中的完整结构化消息
    */
-  getMessages(): SessionMessage[] {
+  getExecutionHistory(): ExecutionMessage[] {
     return this.runtime.session.sessionManager
       .getBranch()
       .flatMap((entry) =>
@@ -149,7 +146,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
    * @param text - 修改后的文本
    * @returns 提示被接受后的当前分支历史
    */
-  async editAndResend(entryId: string, text: string): Promise<SessionMessage[]> {
+  async editAndResend(entryId: string, text: string): Promise<void> {
     this.assertIdle();
     const session = this.runtime.session;
     const branch = session.sessionManager.getBranch();
@@ -171,7 +168,6 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
     } else {
       await session.navigateTree(entryId);
     }
-    const prefix = this.getMessages();
     try {
       await this.prompt(text);
     } catch (error) {
@@ -184,15 +180,6 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
       throw error;
     }
 
-    const messages: SessionMessage[] = [
-      ...prefix,
-      {
-        entryId: null,
-        message: { role: 'user', content: text, timestamp: Date.now() },
-      },
-    ];
-    this.emit({ type: 'session_history_changed', messages });
-    return messages;
   }
 
   /**
@@ -208,6 +195,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
     }
     return {
       sessionName: session.sessionName ?? null,
+      executionAvailable: true,
       isRunning: !session.isIdle || this.activeCompaction !== null,
       activeCompaction: this.activeCompaction ? { ...this.activeCompaction } : null,
       pendingMessages: this.pendingMessages.getSnapshot(),
@@ -226,12 +214,9 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
    *
    * @returns 当前 Pi Runtime 的权威展示快照
    */
-  getSnapshot(): SessionSnapshotEvent {
-    const streamingMessage = this.runtime.session.agent.state.streamingMessage;
+  getSnapshot(): Omit<SessionSnapshotEvent, 'history'> {
     return {
       type: 'session_snapshot',
-      messages: this.getMessages(),
-      activeAssistant: streamingMessage?.role === 'assistant' ? { ...streamingMessage } : null,
       state: this.getState(),
     };
   }
@@ -344,7 +329,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
   }
 
   /** @param event - 要广播给当前会话全部客户端的事件 */
-  private emit(event: AgentStreamEvent): void {
+  private emit(event: AgentSessionAdapterEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
@@ -363,7 +348,6 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
       this.activeCompaction = null;
     }
 
-    const jsonEvent = toJsonAgentEvent(event);
-    this.emit(jsonEvent);
+    this.emit(event);
   };
 }

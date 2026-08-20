@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentStreamEvent, ChatMessage } from '@lvdagun/protocol';
+import type { AgentMessage as ChatMessage } from '@earendil-works/pi-agent-core';
+
+import type { AgentSessionAdapterEvent } from '../../src/hub/agent-hub-adapter';
 
 /**
  * 构造测试使用的 Pi 助手消息。
@@ -471,8 +473,8 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       noContextFiles: true,
     });
     expect(pi.state.resourceLoaderOptions?.extensionFactories).toEqual([
-      expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-pending-messages', hidden: true }),
+      expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
     ]);
     expect(pi.state.persistedFiles).toEqual([
       {
@@ -496,7 +498,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       apiKey: '',
       modelId: 'claude-a',
     });
-    const events: AgentStreamEvent[] = [];
+    const events: AgentSessionAdapterEvent[] = [];
     session.subscribe((event) => events.push(event));
 
     expect(session.getState()).toMatchObject({
@@ -672,7 +674,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
     expect(session.getState().thinkingLevel).toBe('high');
   });
 
-  it('原样镜像 Pi JSON 事件，并去掉 message_update 累计快照', async () => {
+  it('向后端历史映射器保留完整 Pi 事件', async () => {
     const startMessage = assistantMessage('', 'pending', 1);
     pi.state.sessionEvents = [
       { type: 'message_start', message: startMessage },
@@ -693,7 +695,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       apiKey: '',
       modelId: 'claude-a',
     });
-    const events: AgentStreamEvent[] = [];
+    const events: AgentSessionAdapterEvent[] = [];
     session.subscribe((event) => events.push(event));
 
     await session.prompt('你好');
@@ -702,7 +704,13 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       { type: 'message_start', message: startMessage },
       {
         type: 'message_update',
-        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '你' },
+        message: { ...startMessage, content: [{ type: 'text', text: '你' }] },
+        assistantMessageEvent: {
+          type: 'text_delta',
+          contentIndex: 0,
+          delta: '你',
+          partial: { ...startMessage, content: [{ type: 'text', text: '你' }] },
+        },
       },
     ]);
   });
@@ -762,7 +770,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       modelId: 'claude-a',
     });
 
-    expect(session.getMessages()).toEqual([
+    expect(session.getExecutionHistory()).toEqual([
       {
         entryId: 'entry-old',
         message: oldMessage,
