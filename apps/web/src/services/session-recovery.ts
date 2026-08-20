@@ -5,8 +5,6 @@ import { operationFailedAction } from '@/state/chat-session-state';
 import { api } from '@/services/api-client';
 import { subscribeEvents } from '@/services/session-events';
 
-const RECONNECT_NOTICE_DELAY_MS = 1_000;
-
 /**
  * 建立一条会话恢复线路：权威快照先校准页面，随后消费增量事件，并在结算后收敛稳定条目标识。
  *
@@ -20,7 +18,6 @@ export function connectSessionRecovery(
 ): () => void {
   let closed = false;
   let unsubscribe: (() => void) | null = null;
-  let reconnectNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** 收敛实时临时消息与服务端持久化历史中的稳定条目标识。 */
   const convergeHistory = (): void => {
@@ -37,10 +34,6 @@ export function connectSessionRecovery(
     unsubscribe = subscribeEvents(
       sessionId,
       (event) => {
-        if (event.type === 'session_snapshot' && reconnectNoticeTimer) {
-          clearTimeout(reconnectNoticeTimer);
-          reconnectNoticeTimer = null;
-        }
         dispatch({ type: 'product_event', event });
 
         if (isTerminalSessionEvent(event)) {
@@ -51,13 +44,7 @@ export function connectSessionRecovery(
           convergeHistory();
         }
       },
-      () => {
-        dispatch({ type: 'connection_lost' });
-        if (reconnectNoticeTimer) clearTimeout(reconnectNoticeTimer);
-        reconnectNoticeTimer = setTimeout(() => {
-          dispatch({ type: 'connection_notice' });
-        }, RECONNECT_NOTICE_DELAY_MS);
-      },
+      () => dispatch({ type: 'connection_lost' }),
       (error) => dispatch(operationFailedAction(error))
     );
   } catch (error) {
@@ -66,7 +53,6 @@ export function connectSessionRecovery(
 
   return () => {
     closed = true;
-    if (reconnectNoticeTimer) clearTimeout(reconnectNoticeTimer);
     unsubscribe?.();
   };
 }

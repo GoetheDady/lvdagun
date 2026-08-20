@@ -14,6 +14,9 @@ import {
 
 type EventListener = (event: AgentStreamEvent) => void;
 const REQUEST_TIMEOUT_MS = 30_000;
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+
+export type HubConnectionStatus = 'connecting' | 'connected' | 'failed';
 
 interface Subscription {
   onEvent: EventListener;
@@ -37,7 +40,11 @@ export function getRpcConnection(): RpcConnection {
 
 export class RpcConnection {
   private socket: WebSocket | null = null;
-  private opening: Promise<void> | null = null;
+  private initializedSocket: WebSocket | null = null;
+  private connectionCycle: Promise<void> | null = null;
+  private restoration: Promise<void> | null = null;
+  private status: HubConnectionStatus = 'connecting';
+  private readonly statusListeners = new Set<() => void>();
   private readonly pending = new Map<
     number,
     {
@@ -50,9 +57,29 @@ export class RpcConnection {
   private readonly subscriptions = new Map<string, Set<Subscription>>();
   private readonly listSubscriptions = new Set<ListSubscription>();
 
+  /** @returns Hub 连接的当前状态 */
+  readonly getStatus = (): HubConnectionStatus => this.status;
+
+  /**
+   * 订阅 Hub 连接状态变化。
+   *
+   * @param listener - 状态变化回调
+   * @returns 取消订阅函数
+   */
+  readonly subscribeStatus = (listener: () => void): (() => void) => {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  };
+
+  /** 在用户确认后从失败态开启新的连接轮次。 */
+  reconnect(): void {
+    if (this.status !== 'failed') return;
+    this.startRestoration(true);
+  }
+
   /** 发起一个 JSON-RPC request。 */
   async request<T>(method: RpcMethod, params?: unknown): Promise<T> {
-    await this.ensureOpen();
+    await this.ensureConnected();
     const id = nextId++;
     const message: RpcRequest = {
       jsonrpc: '2.0',
@@ -72,7 +99,9 @@ export class RpcConnection {
         timeout,
       });
       try {
-        this.socket!.send(JSON.stringify(message));
+        const socket = this.socket;
+        if (!socket || socket !== this.initializedSocket) throw new Error('Hub 连接已断开');
+        socket.send(JSON.stringify(message));
       } catch (error) {
         window.clearTimeout(timeout);
         this.pending.delete(id);
@@ -87,19 +116,7 @@ export class RpcConnection {
     const set = existing ?? new Set<Subscription>();
     set.add(subscription);
     this.subscriptions.set(sessionId, set);
-    try {
-      if (!existing) {
-        const snapshot = await this.request<SessionSnapshotEvent>('session/subscribe', {
-          sessionId,
-        });
-        subscription.onEvent(snapshot);
-      }
-    } catch (error) {
-      set.delete(subscription);
-      if (set.size === 0) this.subscriptions.delete(sessionId);
-      throw error;
-    }
-    return () => {
+    const unsubscribe = (): void => {
       set.delete(subscription);
       if (set.size === 0) {
         this.subscriptions.delete(sessionId);
@@ -108,93 +125,182 @@ export class RpcConnection {
         );
       }
     };
+    try {
+      if (!existing) {
+        const snapshot = await this.request<SessionSnapshotEvent>('session/subscribe', {
+          sessionId,
+        });
+        subscription.onEvent(snapshot);
+      }
+    } catch (error) {
+      if (this.status === 'failed') {
+        subscription.onError?.(toError(error));
+        return unsubscribe;
+      }
+      set.delete(subscription);
+      if (set.size === 0) this.subscriptions.delete(sessionId);
+      throw error;
+    }
+    return unsubscribe;
   }
 
   /** 订阅会话列表的权威快照和变化通知。 */
   async subscribeSessionList(subscription: ListSubscription): Promise<() => void> {
     const alreadySubscribed = this.listSubscriptions.size > 0;
     this.listSubscriptions.add(subscription);
-    try {
-      if (!alreadySubscribed)
-        subscription.onList(await this.request<SessionSummary[]>('session/list'));
-    } catch (error) {
-      this.listSubscriptions.delete(subscription);
-      throw error;
-    }
-    return () => {
+    const unsubscribe = (): void => {
       this.listSubscriptions.delete(subscription);
       if (this.listSubscriptions.size === 0)
         void this.request('session/unsubscribe', { scope: 'list' }).catch(() => undefined);
     };
+    try {
+      if (!alreadySubscribed)
+        subscription.onList(await this.request<SessionSummary[]>('session/list'));
+    } catch (error) {
+      if (this.status === 'failed') {
+        subscription.onError?.(toError(error));
+        return unsubscribe;
+      }
+      this.listSubscriptions.delete(subscription);
+      throw error;
+    }
+    return unsubscribe;
   }
 
-  private async ensureOpen(): Promise<void> {
-    if (this.socket?.readyState === WebSocket.OPEN) return;
-    if (this.opening) return this.opening;
-    this.opening = new Promise<void>((resolve, reject) => {
+  private async ensureConnected(restartFailed = false): Promise<void> {
+    if (
+      this.status === 'connected' &&
+      this.socket === this.initializedSocket &&
+      this.socket?.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+    if (this.connectionCycle) return this.connectionCycle;
+    if (this.status === 'failed' && !restartFailed) throw new Error('Hub 连接失败');
+
+    this.setStatus('connecting');
+    const cycle = this.runConnectionCycle();
+    this.connectionCycle = cycle;
+    try {
+      await cycle;
+    } finally {
+      if (this.connectionCycle === cycle) this.connectionCycle = null;
+    }
+  }
+
+  private async runConnectionCycle(): Promise<void> {
+    let lastError = new Error('Hub 连接失败');
+    for (let attempt = 0; attempt <= RECONNECT_DELAYS_MS.length; attempt += 1) {
+      if (attempt > 0) await this.wait(RECONNECT_DELAYS_MS[attempt - 1]!);
+      try {
+        const socket = await this.openOnce();
+        if (
+          socket !== this.socket ||
+          socket !== this.initializedSocket ||
+          socket.readyState !== WebSocket.OPEN
+        ) {
+          throw new Error('Hub 连接已断开');
+        }
+        this.setStatus('connected');
+        return;
+      } catch (error) {
+        lastError = toError(error);
+      }
+    }
+    this.setStatus('failed');
+    throw lastError;
+  }
+
+  private openOnce(): Promise<WebSocket> {
+    return new Promise<WebSocket>((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(
-        `${protocol}//${window.location.host}${RPC_PATH}`,
-        RPC_WEBSOCKET_SUBPROTOCOL
-      );
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(
+          `${protocol}//${window.location.host}${RPC_PATH}`,
+          RPC_WEBSOCKET_SUBPROTOCOL
+        );
+      } catch (error) {
+        reject(toError(error));
+        return;
+      }
+      let openingError = new Error('Hub 连接已断开');
       this.socket = socket;
       socket.onopen = () => {
         const id = nextId++;
         const timeout = window.setTimeout(() => {
           if (!this.pending.delete(id)) return;
+          openingError = new Error('初始化超时');
           socket.close();
-          reject(new Error('初始化超时'));
         }, REQUEST_TIMEOUT_MS);
         this.pending.set(id, {
           method: 'initialize',
-          resolve: () => resolve(),
+          resolve: () => {
+            this.initializedSocket = socket;
+            resolve(socket);
+          },
           reject: (error) => {
+            openingError = error;
             socket.close();
-            reject(error);
           },
           timeout,
         });
-        socket.send(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id,
-            method: 'initialize',
-            params: {
-              protocolVersion: RPC_PROTOCOL_VERSION,
-              clientInfo: { name: 'lvdagun-web', version: '0.1.0' },
-              capabilities: {},
-            },
-          })
-        );
+        try {
+          socket.send(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id,
+              method: 'initialize',
+              params: {
+                protocolVersion: RPC_PROTOCOL_VERSION,
+                clientInfo: { name: 'lvdagun-web', version: '0.1.0' },
+                capabilities: {},
+              },
+            })
+          );
+        } catch (error) {
+          openingError = toError(error);
+          socket.close();
+        }
       };
       socket.onmessage = (event) => this.handleMessage(event.data);
       socket.onerror = () => {
+        openingError = new Error('WebSocket 连接失败');
         socket.close();
-        reject(new Error('WebSocket 连接失败'));
       };
       socket.onclose = () => {
-        this.socket = null;
-        this.opening = null;
+        const wasConnected = this.initializedSocket === socket;
+        if (this.socket === socket) this.socket = null;
+        if (this.initializedSocket === socket) this.initializedSocket = null;
         for (const request of this.pending.values()) {
           window.clearTimeout(request.timeout);
-          request.reject(new Error('连接已断开'));
+          request.reject(openingError);
         }
         this.pending.clear();
-        for (const set of this.subscriptions.values())
-          for (const item of set) item.onDisconnect?.();
-        for (const item of this.listSubscriptions) item.onDisconnect?.();
-        window.setTimeout(() => void this.reconnectSubscriptions(), 1_000);
+        reject(openingError);
+        if (wasConnected) {
+          this.setStatus('connecting');
+          for (const set of this.subscriptions.values())
+            for (const item of set) item.onDisconnect?.();
+          for (const item of this.listSubscriptions) item.onDisconnect?.();
+          this.startRestoration(false);
+        }
       };
-    }).finally(() => {
-      this.opening = null;
     });
-    return this.opening;
   }
 
-  private async reconnectSubscriptions(): Promise<void> {
-    if (this.subscriptions.size === 0 && this.listSubscriptions.size === 0) return;
+  private startRestoration(restartFailed: boolean): void {
+    if (this.restoration) return;
+    const restoration = this.restoreSubscriptions(restartFailed);
+    this.restoration = restoration;
+    void restoration.finally(() => {
+      if (this.restoration === restoration) this.restoration = null;
+    });
+  }
+
+  private async restoreSubscriptions(restartFailed: boolean): Promise<void> {
     try {
-      await this.ensureOpen();
+      await this.ensureConnected(restartFailed);
       for (const [sessionId, set] of this.subscriptions) {
         const snapshot = await this.request<SessionSnapshotEvent>('session/subscribe', {
           sessionId,
@@ -206,11 +312,21 @@ export class RpcConnection {
         for (const item of this.listSubscriptions) item.onList(sessions);
       }
     } catch (error) {
-      const reconnectError = error instanceof Error ? error : new Error(String(error));
+      const reconnectError = toError(error);
       for (const set of this.subscriptions.values())
         for (const item of set) item.onError?.(reconnectError);
       for (const item of this.listSubscriptions) item.onError?.(reconnectError);
     }
+  }
+
+  private wait(delayMs: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  }
+
+  private setStatus(status: HubConnectionStatus): void {
+    if (this.status === status) return;
+    this.status = status;
+    for (const listener of this.statusListeners) listener();
   }
 
   private handleMessage(raw: unknown): void {
@@ -267,4 +383,9 @@ export class RpcRequestError extends Error {
 }
 function toRpcError(error: RpcError['error']): Error {
   return new RpcRequestError(error.code, error.message, error.data);
+}
+
+/** @param error - 未知异常 @returns Error 实例 */
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import type { SessionSummary } from '@lvdagun/protocol';
+import type { HubConnectionStatus } from '@/services/rpc-client';
 
 import {
   AlertDialog,
@@ -45,11 +46,13 @@ export interface SessionSidebarProps {
   creating: boolean;
   mutatingSessionId: string | null;
   error: string | null;
+  hubConnectionStatus: HubConnectionStatus;
   onCreate: () => void;
   onSelect: (sessionId: string) => void;
   onArchive: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => Promise<boolean>;
+  onReconnect: () => void;
   onSettings: () => void;
 }
 
@@ -66,11 +69,13 @@ export function SessionSidebar({
   creating,
   mutatingSessionId,
   error,
+  hubConnectionStatus,
   onCreate,
   onSelect,
   onArchive,
   onDelete,
   onRename,
+  onReconnect,
   onSettings,
 }: SessionSidebarProps): React.JSX.Element {
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
@@ -149,7 +154,7 @@ export function SessionSidebar({
                     <button
                       type="button"
                       aria-label={`更多操作：${session.title}`}
-                      className="absolute top-1.5 right-1.5 flex size-7 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                      className="absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
                     >
                       {mutating ? <Loader2 className="size-4 animate-spin" /> : <Ellipsis />}
                     </button>
@@ -188,15 +193,16 @@ export function SessionSidebar({
           {error ? <p className="px-2 py-2 text-xs text-destructive">{error}</p> : null}
         </nav>
 
-        <div className="shrink-0 p-2">
+        <div className="flex shrink-0 items-center p-2">
           <Button
-            className="w-full justify-start hover:bg-sidebar-accent"
+            className="min-w-0 flex-1 justify-start hover:bg-sidebar-accent"
             variant="ghost"
             onClick={onSettings}
           >
             <Settings />
             设置
           </Button>
+          <HubConnectionIndicator status={hubConnectionStatus} onReconnect={onReconnect} />
         </div>
       </aside>
 
@@ -262,5 +268,66 @@ export function SessionSidebar({
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+const HUB_CONNECTION_PRESENTATION: Record<
+  HubConnectionStatus,
+  { label: string; dotClassName: string }
+> = {
+  connected: { label: 'Hub 已连接', dotClassName: 'bg-emerald-500 text-emerald-500' },
+  connecting: {
+    label: 'Hub 正在连接',
+    dotClassName: 'animate-pulse bg-amber-400 text-amber-400',
+  },
+  failed: {
+    label: 'Hub 连接失败，点击重连',
+    dotClassName: 'bg-destructive text-destructive',
+  },
+};
+
+/**
+ * 显示全局 Hub 连接状态，仅在失败时接受手动重连。
+ *
+ * @param props - 连接状态与重连回调
+ * @returns 连接状态点
+ */
+function HubConnectionIndicator({
+  status,
+  onReconnect,
+}: {
+  status: HubConnectionStatus;
+  onReconnect: () => void;
+}): React.JSX.Element {
+  const presentation = HUB_CONNECTION_PRESENTATION[status];
+  const dot = (
+    <span
+      className={`size-2 rounded-full shadow-[0_0_8px_currentColor] ${presentation.dotClassName}`}
+    />
+  );
+
+  if (status === 'failed') {
+    return (
+      <button
+        type="button"
+        aria-label={presentation.label}
+        className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        title={presentation.label}
+        onClick={onReconnect}
+      >
+        {dot}
+      </button>
+    );
+  }
+
+  return (
+    <span
+      role="status"
+      aria-label={presentation.label}
+      className="flex size-8 shrink-0 items-center justify-center"
+      title={presentation.label}
+    >
+      {dot}
+    </span>
   );
 }

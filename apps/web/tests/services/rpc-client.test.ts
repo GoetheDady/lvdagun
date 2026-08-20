@@ -48,8 +48,18 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+function failSocket(socket: MockWebSocket): void {
+  socket.onerror?.();
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 async function openConnection(connection: RpcConnection): Promise<MockWebSocket> {
   const openingRequest = connection.request<unknown>('catalog/listProviders');
@@ -73,6 +83,79 @@ async function openConnection(connection: RpcConnection): Promise<MockWebSocket>
 }
 
 describe('RpcConnection', () => {
+  it('协议初始化完成后才标记为已连接', async () => {
+    const connection = new RpcConnection();
+    const statuses: string[] = [];
+    connection.subscribeStatus(() => statuses.push(connection.getStatus()));
+    const request = connection.request<unknown>('catalog/listProviders');
+    const socket = MockWebSocket.instances[0]!;
+
+    expect(connection.getStatus()).toBe('connecting');
+    socket.open();
+    expect(connection.getStatus()).toBe('connecting');
+    const initialize = JSON.parse(socket.sent[0]!) as { id: number };
+    socket.receive({
+      jsonrpc: '2.0',
+      id: initialize.id,
+      result: {
+        protocolVersion: 1,
+        serverInfo: { name: 'lvdagun', version: '0.1.0' },
+        capabilities: {},
+      },
+    });
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
+    const listProviders = JSON.parse(socket.sent[1]!) as { id: number };
+    socket.receive({ jsonrpc: '2.0', id: listProviders.id, result: [] });
+    await request;
+
+    expect(connection.getStatus()).toBe('connected');
+    expect(statuses).toEqual(['connected']);
+  });
+
+  it('失败后自动重连五次，耗尽后保持红色并等待手动重连', async () => {
+    vi.useFakeTimers();
+    const connection = new RpcConnection();
+    const request = connection.request<unknown>('catalog/listProviders').catch(() => undefined);
+
+    failSocket(MockWebSocket.instances[0]!);
+    await flushMicrotasks();
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+      const socketCountBeforeRetry = MockWebSocket.instances.length;
+      vi.advanceTimersByTime(delay);
+      await flushMicrotasks();
+      expect(MockWebSocket.instances).toHaveLength(socketCountBeforeRetry + 1);
+      failSocket(MockWebSocket.instances.at(-1)!);
+      await flushMicrotasks();
+    }
+
+    await request;
+    expect(MockWebSocket.instances).toHaveLength(6);
+    expect(connection.getStatus()).toBe('failed');
+    vi.advanceTimersByTime(60_000);
+    expect(MockWebSocket.instances).toHaveLength(6);
+
+    connection.reconnect();
+    await flushMicrotasks();
+    expect(connection.getStatus()).toBe('connecting');
+    expect(MockWebSocket.instances).toHaveLength(7);
+    const socket = MockWebSocket.instances.at(-1)!;
+    socket.open();
+    const initialize = JSON.parse(socket.sent[0]!) as { id: number };
+    socket.receive({
+      jsonrpc: '2.0',
+      id: initialize.id,
+      result: {
+        protocolVersion: 1,
+        serverInfo: { name: 'lvdagun', version: '0.1.0' },
+        capabilities: {},
+      },
+    });
+    await flushMicrotasks();
+    expect(connection.getStatus()).toBe('connected');
+  });
+
   it('通过 id 匹配并发请求的乱序响应', async () => {
     const connection = new RpcConnection();
     const socket = await openConnection(connection);

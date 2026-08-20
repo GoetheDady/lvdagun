@@ -22,7 +22,6 @@ export interface ChatSessionState {
   settingModel: boolean;
   unavailableReason: SessionUnavailableReason | null;
   synchronized: boolean;
-  showReconnectNotice: boolean;
   error: ChatError | null;
 }
 
@@ -37,7 +36,6 @@ export const initialState: ChatSessionState = {
   settingModel: false,
   unavailableReason: null,
   synchronized: false,
-  showReconnectNotice: false,
   error: null,
 };
 
@@ -53,7 +51,6 @@ export type ChatSessionAction =
   | { type: 'model_started' }
   | { type: 'model_finished'; session: AgentSessionState }
   | { type: 'connection_lost' }
-  | { type: 'connection_notice' }
   | { type: 'operation_failed'; message: string };
 
 /** @param error - 未知错误 @returns 操作失败动作 */
@@ -79,7 +76,6 @@ function unavailableState(
     aborting: false,
     unavailableReason: reason,
     synchronized: false,
-    showReconnectNotice: false,
     error: null,
   };
 }
@@ -99,7 +95,6 @@ function reduceProductEvent(state: ChatSessionState, event: AgentStreamEvent): C
         settingModel: false,
         unavailableReason: null,
         synchronized: true,
-        showReconnectNotice: false,
       };
     case 'session_history_changed':
       return {
@@ -162,8 +157,6 @@ export function chatReducer(state: ChatSessionState, action: ChatSessionAction):
       return { ...state, session: action.session, settingModel: false };
     case 'connection_lost':
       return { ...state, synchronized: false };
-    case 'connection_notice':
-      return state.synchronized ? state : { ...state, showReconnectNotice: true };
     case 'operation_failed':
       return {
         ...state,

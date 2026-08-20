@@ -181,6 +181,8 @@ function ToolRun(props: {
 }): React.JSX.Element {
   const status = props.draft?.status ?? (props.result?.isError ? 'error' : 'success');
   const [open, setOpen] = useState(status === 'running' || status === 'error');
+  const command = (props.call.args as { command?: unknown } | null)?.command;
+  const title = !open && props.call.toolName === 'bash' && typeof command === 'string' ? command : props.call.toolName;
   return (
     <details
       className={`overflow-hidden rounded-md bg-muted/55 ${status === 'error' ? 'text-destructive ring-1 ring-destructive/35' : ''}`}
@@ -189,7 +191,7 @@ function ToolRun(props: {
     >
       <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
         <Wrench className="size-3.5" />
-        <span className="min-w-0 flex-1 truncate font-medium">{props.call.toolName}</span>
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <span>{status === 'running' ? '运行中' : status === 'error' ? '执行失败' : '执行完成'}</span>
         {status === 'running' ? <Loader2 className="size-3.5 animate-spin" /> : null}
       </summary>

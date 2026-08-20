@@ -14,6 +14,7 @@ import { useChatSession } from '@/hooks/use-chat-session';
 import { selectEditableUserItemId, selectSessionTitle } from '@/state/chat-session-selectors';
 import type { SessionUnavailableReason } from '@/state/chat-session-state';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
+import { useHubConnection } from '@/hooks/use-hub-connection';
 
 /** 空会话中可直接填入输入框的示例提示。 */
 const SUGGESTIONS = ['总结今天的重要新闻', '帮我检查一个本地项目', '制定本周待办计划'];
@@ -54,6 +55,7 @@ function ChatPage(): React.JSX.Element {
 function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
   const navigate = useNavigate();
   const sessionList = useSessionList();
+  const hubConnection = useHubConnection();
   const persistedLayout = useDefaultLayout({
     id: CHAT_LAYOUT_ID,
     panelIds: ['session-sidebar', 'chat-workspace'],
@@ -109,11 +111,13 @@ function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
             creating={sessionList.creating}
             mutatingSessionId={sessionList.mutatingSessionId}
             error={sessionList.error}
+            hubConnectionStatus={hubConnection.status}
             onCreate={handleNewSession}
             onSelect={(selectedId) => navigate(`/sessions/${encodeURIComponent(selectedId)}`)}
             onArchive={handleArchiveSession}
             onDelete={handleDeleteSession}
             onRename={sessionList.renameSession}
+            onReconnect={hubConnection.reconnect}
             onSettings={() => navigate('/settings')}
           />
         </ResizablePanel>
@@ -250,18 +254,6 @@ function ChatWorkspace({
       <header className="flex h-14 shrink-0 items-center gap-3 px-5">
         <div className="mr-auto min-w-0">
           <h2 className="truncate text-sm font-semibold">{sessionTitle}</h2>
-          <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span
-              className={`size-1.5 rounded-full ${
-                state.isRunning ? 'animate-pulse bg-soy' : 'bg-wood'
-              }`}
-            />
-            {state.showReconnectNotice
-              ? '正在重新连接'
-              : state.isRunning
-                ? '运行中'
-                : '就绪'}
-          </p>
         </div>
       </header>
 

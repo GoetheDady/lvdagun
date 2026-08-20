@@ -44,7 +44,18 @@ function history(): ProductSessionHistory {
         { type: 'assistant_segment', itemId: 'segment-a', runId: 'run-a', createdAt: 2, status: 'completed', content: [{ type: 'text', text: '这是已经生成的第一段。' }] },
         { type: 'assistant_segment', itemId: 'segment-hidden', runId: 'run-a', createdAt: 3, status: 'superseded', content: [{ type: 'text', text: '这段不应该显示' }] },
         { type: 'retry', itemId: 'retry-a', runId: 'run-a', createdAt: 4, kind: 'model', attempt: 1, maxAttempts: 3, errorMessage: '连接中断', status: 'success' },
-        { type: 'assistant_segment', itemId: 'segment-b', runId: 'run-a', createdAt: 5, status: 'completed', content: [{ type: 'text', text: '接着上面已经生成的继续生成' }] },
+        {
+          type: 'assistant_segment', itemId: 'segment-b', runId: 'run-a', createdAt: 5, status: 'completed',
+          content: [
+            { type: 'text', text: '接着上面已经生成的继续生成' },
+            { type: 'tool_call', toolCallId: 'tool-a', toolName: 'bash', args: { command: 'cat /Users/gdsw/example/SKILL.md' } },
+          ],
+        },
+        {
+          type: 'tool_result', itemId: 'result-a', runId: 'run-a', createdAt: 6,
+          toolCallId: 'tool-a', toolName: 'bash', args: { command: 'cat /Users/gdsw/example/SKILL.md' },
+          content: [{ type: 'text', text: '文件内容' }], isError: false,
+        },
       ],
     }],
   };
@@ -71,6 +82,7 @@ describe('ChatPage 产品历史投影', () => {
   it('按原位置显示重试并隐藏被取代片段', async () => {
     renderPage();
     expect(await screen.findByText('这是已经生成的第一段。')).toBeInTheDocument();
+    expect(screen.queryByText('就绪')).not.toBeInTheDocument();
     expect(screen.getByText('第 1 次重试成功')).toBeInTheDocument();
     expect(screen.getByText('接着上面已经生成的继续生成')).toBeInTheDocument();
     expect(screen.queryByText('这段不应该显示')).not.toBeInTheDocument();
@@ -93,5 +105,21 @@ describe('ChatPage 产品历史投影', () => {
     await user.type(textarea, '修改后的问题');
     await user.click(screen.getByTitle('发送编辑后的消息'));
     expect(api.editAndResend).toHaveBeenCalledWith('session-a', 'user-a', '修改后的问题');
+  });
+
+  it('bash 工具折叠时显示命令，展开时显示工具名', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const command = 'cat /Users/gdsw/example/SKILL.md';
+    const collapsedTitle = await screen.findByText(command, { selector: 'summary span' });
+    const summary = collapsedTitle.closest('summary');
+    expect(summary).not.toBeNull();
+
+    await user.click(summary!);
+    expect(screen.getByText('bash', { selector: 'summary span' })).toBeInTheDocument();
+
+    await user.click(summary!);
+    expect(screen.getByText(command, { selector: 'summary span' })).toBeInTheDocument();
   });
 });
