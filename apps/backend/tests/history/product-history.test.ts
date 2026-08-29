@@ -1,4 +1,5 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { ProductHistoryDraft } from '@lvdagun/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ProductHistory } from '../../src/history/product-history';
@@ -177,6 +178,51 @@ describe('ProductHistory', () => {
     const result = items.find((item) => item.type === 'tool_result');
     expect(call?.toolCallId).not.toBe('product-tool-a');
     expect(result?.type === 'tool_result' ? result.toolCallId : null).toBe(call?.toolCallId);
+  });
+
+  it('草稿事件尾随节流：合并窗口内只广播最后一次最新草稿', async () => {
+    const history = makeHistory();
+    const events: ProductHistoryDraft[] = [];
+    history.subscribe('session-a', (event) => {
+      if (event.type === 'session_draft_changed') events.push(event.draft!);
+    });
+    const draft = (runId: string): ProductHistoryDraft => ({
+      runId,
+      activeSegment: null,
+      tools: [],
+      retryDeadlineAt: null,
+    });
+
+    history.setDraft('session-a', draft('r1'));
+    history.setDraft('session-a', draft('r2'));
+    history.setDraft('session-a', draft('r3'));
+    // 合并窗口内不立即广播
+    expect(events).toHaveLength(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(events).toHaveLength(1);
+    expect(events[0]!.runId).toBe('r3');
+  });
+
+  it('清空草稿立即广播并取消挂起的延迟广播', async () => {
+    const history = makeHistory();
+    const events: (ProductHistoryDraft | null)[] = [];
+    history.subscribe('session-a', (event) => {
+      if (event.type === 'session_draft_changed') events.push(event.draft);
+    });
+    history.setDraft('session-a', {
+      runId: 'r1',
+      activeSegment: null,
+      tools: [],
+      retryDeadlineAt: null,
+    });
+    history.setDraft('session-a', null);
+    // null 同步广播
+    expect(events).toEqual([null]);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // 挂起的延迟广播已被取消，不重复发出
+    expect(events).toEqual([null]);
   });
 });
 

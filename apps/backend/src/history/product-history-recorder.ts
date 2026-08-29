@@ -241,8 +241,9 @@ export class ProductHistoryRecorder {
         mapPiAssistantStatus(message),
         this.resolveProductToolCallId
       );
-      this.updateRun((run) => run.items.push(segment));
+      // 先收敛活动段再结算：history 快照不会同时携带活动段与结算段，避免客户端短暂双渲染
       this.history.setDraft(this.sessionId, draft ? { ...draft, activeSegment: null } : null);
+      this.updateRun((run) => run.items.push(segment));
       return;
     }
     if (message.role === 'toolResult') {
@@ -267,6 +268,15 @@ export class ProductHistoryRecorder {
     kind: ProductRetryItem['kind'],
     event: { attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
   ): void {
+    // 先收敛草稿再写重试条目，history 快照不会同时携带旧的流式段与重试卡
+    const draft = this.history.getDraft(this.sessionId);
+    const run = this.history.getActiveRun(this.sessionId);
+    this.history.setDraft(this.sessionId, {
+      runId: run.runId,
+      activeSegment: null,
+      tools: draft?.tools ?? [],
+      retryDeadlineAt: Date.now() + event.delayMs,
+    });
     this.updateRun((run) => {
       if (kind === 'model') {
         const segment = [...run.items]
@@ -304,14 +314,6 @@ export class ProductHistoryRecorder {
           status: 'waiting',
         });
       }
-    });
-    const draft = this.history.getDraft(this.sessionId);
-    const run = this.history.getActiveRun(this.sessionId);
-    this.history.setDraft(this.sessionId, {
-      runId: run.runId,
-      activeSegment: null,
-      tools: draft?.tools ?? [],
-      retryDeadlineAt: Date.now() + event.delayMs,
     });
   }
 

@@ -69,7 +69,9 @@ function MarkdownText(props: { text: string; streaming?: boolean }): React.JSX.E
       className="chat-markdown text-sm leading-6"
       mode={props.streaming ? 'streaming' : 'static'}
       isAnimating={props.streaming}
-      animated={props.streaming}
+      // Streamdown 动画默认按空白分词（sep:'word'），中文整句无空格会整行当一个词级联淡入，
+      // 造成多行同时流式；改为字符级级联并缩短 stagger，让文字顺序逐字出现。
+      animated={props.streaming ? { sep: 'char', stagger: 15, duration: 120 } : undefined}
       caret={props.streaming ? 'block' : undefined}
     >
       {props.text}

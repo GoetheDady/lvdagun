@@ -27,10 +27,14 @@ export class ProductHistorySessionNotFoundError extends Error {
   }
 }
 
+/** 草稿事件合并窗口：与一帧刷新对齐，避免每个模型 delta 都广播一次全量草稿 */
+const DRAFT_EMIT_DELAY_MS = 60;
+
 /** 驴打滚产品会话历史聚合。 */
 export class ProductHistory {
   private readonly drafts = new Map<string, ProductHistoryDraft>();
   private readonly listeners = new Map<string, Set<(event: AgentStreamEvent) => void>>();
+  private readonly draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** @param repository - 产品历史持久化边界 */
   constructor(private readonly repository: ProductHistoryRepository) {}
@@ -396,16 +400,31 @@ export class ProductHistory {
     return this.drafts.get(sessionId) ?? null;
   }
 
-  /** @param sessionId - 产品会话 @param draft - 新草稿 */
+  /**
+   * 写入当前草稿并广播变更事件。
+   *
+   * 高频流式更新（每个模型 delta 一次）写入侧直接落内存，广播侧做尾随节流合并：
+   * 同一合并窗口内只发最后一次最新草稿，避免事件突发把多行文本一次性推到客户端；
+   * null（流结束、等待重试等需要立刻收敛的状态）立即发出并取消挂起的广播。
+   *
+   * @param sessionId - 产品会话
+   * @param draft - 新草稿；null 表示清空
+   */
   setDraft(sessionId: string, draft: ProductHistoryDraft | null): void {
-    const session = this.requireSession(sessionId);
+    // 校验会话仍然存在（无其他用途）
+    this.requireSession(sessionId);
     if (draft) this.drafts.set(sessionId, draft);
     else this.drafts.delete(sessionId);
-    this.emit(sessionId, {
-      type: 'session_draft_changed',
-      revision: session.revision,
-      draft: structuredClone(draft),
-    });
+    const pending = this.draftTimers.get(sessionId);
+    if (pending) clearTimeout(pending);
+    if (draft === null) {
+      this.draftTimers.delete(sessionId);
+      this.emitDraft(sessionId);
+      return;
+    }
+    const timer = setTimeout(() => this.emitDraft(sessionId), DRAFT_EMIT_DELAY_MS);
+    timer.unref();
+    this.draftTimers.set(sessionId, timer);
   }
 
   /** @param sessionId - 产品会话 @param mutate - 聚合修改 */
@@ -444,8 +463,10 @@ export class ProductHistory {
     return this.repository.putBlob(sessionId, mimeType, data);
   }
 
-  /** @returns 关闭仓储 */
+  /** @returns 关闭仓储并清空挂起的草稿广播 */
   close(): void {
+    for (const timer of this.draftTimers.values()) clearTimeout(timer);
+    this.draftTimers.clear();
     this.repository.close();
   }
 
@@ -508,6 +529,22 @@ export class ProductHistory {
       history: this.getSnapshot(session.id),
     };
     this.emit(session.id, event);
+  }
+
+  /**
+   * 广播当前草稿快照；会话已删除时静默丢弃，避免挂起定时器在会话销毁后抛错。
+   *
+   * @param sessionId - 产品会话
+   */
+  private emitDraft(sessionId: string): void {
+    this.draftTimers.delete(sessionId);
+    const session = this.repository.loadSession(sessionId);
+    if (!session) return;
+    this.emit(sessionId, {
+      type: 'session_draft_changed',
+      revision: session.revision,
+      draft: structuredClone(this.drafts.get(sessionId) ?? null),
+    });
   }
 
   /** @param sessionId - 会话 @param event - 产品事件 */
