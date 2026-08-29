@@ -4,6 +4,7 @@ import type {
   ProductAssistantBlock,
   ProductAssistantSegmentItem,
   ProductToolResultItem,
+  SessionExecutionPlan,
 } from '@lvdagun/protocol';
 
 /** @param message - Pi 消息 @returns 用户纯文本；非用户消息返回空字符串 */
@@ -68,7 +69,8 @@ export function mapPiToolResult(
   identity: { itemId: string; runId: string },
   args: unknown,
   toolCallId: string,
-  storeBlob: (mimeType: string, data: Uint8Array) => string
+  storeBlob: (mimeType: string, data: Uint8Array) => string,
+  executionPlan?: SessionExecutionPlan | null
 ): ProductToolResultItem {
   return {
     type: 'tool_result',
@@ -87,6 +89,7 @@ export function mapPiToolResult(
           }
     ),
     isError: message.isError,
+    ...(message.toolName === 'todo' && executionPlan !== undefined ? { executionPlan } : {}),
   };
 }
 

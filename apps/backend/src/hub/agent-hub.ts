@@ -5,7 +5,7 @@ import {
   createForkSessionTitle,
   type AgentSessionState,
   type AgentStreamEvent,
-  type ModelConfig,
+  type ModelSettings,
   type ModelInfo,
   type ModelReference,
   type ProviderInfo,
@@ -58,7 +58,7 @@ export interface SessionSubscription {
 /** 本地服务使用的 Agent Hub 接口。 */
 export interface AgentHub {
   /** @returns 当前模型配置；尚未配置时返回 null */
-  getConfig(): Promise<ModelConfig | null>;
+  getConfig(): Promise<ModelSettings>;
 
   /** @returns 可配置的 Provider 列表 */
   listProviders(): Promise<ProviderInfo[]>;
@@ -66,8 +66,8 @@ export interface AgentHub {
   /** @param providerId - Provider 标识 @returns 该 Provider 的模型列表 */
   listModels(providerId: string): Promise<ModelInfo[]>;
 
-  /** @param providerId - Provider 标识 @param apiKey - 待验证凭据 @returns 连接结果 */
-  testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult>;
+  /** @param providerId - Provider 标识 @param apiKey - 待验证凭据 @param modelId - 待测试的模型 @returns 连接结果 */
+  testConnection(providerId: string, apiKey: string, modelId: string): Promise<TestConnectionResult>;
 
   /** @returns 按最后更新时间倒序排列的全部会话 */
   listSessions(): Promise<SessionSummary[]>;
@@ -154,8 +154,8 @@ export interface AgentHub {
     listener: (event: AgentStreamEvent) => void
   ): Promise<SessionSubscription>;
 
-  /** @param config - 新模型配置 @returns 保存配置并释放旧 Runtime 后解决的 Promise */
-  updateConfig(config: ModelConfig): Promise<void>;
+  /** @param settings - 新模型服务配置 @returns 保存配置并释放旧 Runtime 后解决的 Promise */
+  updateConfig(settings: ModelSettings): Promise<void>;
 
   /** @returns 停止全部运行并释放所有 Runtime 后解决的 Promise */
   dispose(): Promise<void>;
@@ -182,23 +182,24 @@ export function createAgentHub(
   let configurationChanging = false;
   let disposed = false;
 
-  /** @returns 当前有效配置 */
+  /** @returns 当前有效配置 @throws 尚未配置任何 Provider 凭据 */
   const loadConfig = async () => {
-    const config = await configStore.load();
-    if (!config) {
+    const settings = await configStore.load();
+    if (settings.providers.length === 0) {
       throw new NotConfiguredError();
     }
-    return config;
+    return settings;
   };
 
   /** @returns Pi 执行文件丢失时仍可展示产品历史的只读状态 */
   const createReadOnlyState = async (sessionId: string): Promise<AgentSessionState> => {
-    const config = await loadConfig();
+    const settings = await loadConfig();
+    const reference = settings.defaultModel;
     const [providers, models] = await Promise.all([
       hubAdapter.listProviders(),
-      hubAdapter.listModels(config.provider),
+      reference ? hubAdapter.listModels(reference.provider) : Promise.resolve([]),
     ]);
-    const selected = models.find((model) => model.id === config.modelId);
+    const selected = reference ? models.find((model) => model.id === reference.id) : undefined;
     return {
       sessionName:
         history.listSessions().find((session) => session.id === sessionId)?.title ?? null,
@@ -209,11 +210,13 @@ export function createAgentHub(
       thinkingLevel: 'off',
       availableThinkingLevels: ['off'],
       model: {
-        provider: config.provider,
-        providerName:
-          providers.find((provider) => provider.id === config.provider)?.name ?? config.provider,
-        id: config.modelId,
-        name: selected?.name ?? config.modelId,
+        provider: reference?.provider ?? '',
+        providerName: reference
+          ? (providers.find((provider) => provider.id === reference.provider)?.name ??
+            reference.provider)
+          : '',
+        id: reference?.id ?? '',
+        name: selected?.name ?? reference?.id ?? '未配置',
       },
       availableModels: [],
       modelWarning: 'Pi 执行历史已丢失，当前会话只能查看，不能继续、编辑或分叉',
@@ -380,7 +383,7 @@ export function createAgentHub(
     getConfig: () => configStore.load(),
     listProviders: () => hubAdapter.listProviders(),
     listModels: (providerId) => hubAdapter.listModels(providerId),
-    testConnection: (providerId, apiKey) => hubAdapter.testConnection(providerId, apiKey),
+    testConnection: (providerId, apiKey, modelId) => hubAdapter.testConnection(providerId, apiKey, modelId),
 
     async listSessions(): Promise<SessionSummary[]> {
       const stored = history.listSessions();
@@ -608,7 +611,7 @@ export function createAgentHub(
       }
     },
 
-    async updateConfig(config: ModelConfig): Promise<void> {
+    async updateConfig(settings: ModelSettings): Promise<void> {
       if (configurationChanging || disposed) throw new AgentBusyError();
       configurationChanging = true;
       try {
@@ -624,7 +627,7 @@ export function createAgentHub(
         ) {
           throw new AgentBusyError();
         }
-        await configStore.save(config);
+        await configStore.save(settings);
         await disposeAll();
       } finally {
         configurationChanging = false;

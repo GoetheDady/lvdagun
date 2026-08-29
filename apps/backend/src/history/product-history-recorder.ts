@@ -20,6 +20,7 @@ import {
   mapPiToolResult,
   readPiUserText,
 } from './pi-history-event-mapper';
+import { projectTodoDetails } from '../extensions/todo/todo-projection';
 import { ProductHistory } from './product-history';
 
 /** 产品历史写入失败时通知 Hub 进入恢复状态。 */
@@ -173,8 +174,10 @@ export class ProductHistoryRecorder {
           event.entry.type === 'message' ? event.entry.message : null
         );
         return;
-      case 'agent_end':
       case 'turn_start':
+        this.history.hideCompletedExecutionPlan(this.sessionId);
+        return;
+      case 'agent_end':
       case 'turn_end':
       case 'queue_update':
       case 'bash_execution_update':
@@ -250,12 +253,17 @@ export class ProductHistoryRecorder {
       const run = this.history.getActiveRun(this.sessionId);
       const itemId = randomUUID();
       const productToolCallId = this.resolveProductToolCallId(message.toolCallId);
+      const executionPlan =
+        message.toolName === 'todo' && !message.isError
+          ? projectTodoDetails(message.details)
+          : undefined;
       const result = mapPiToolResult(
         message,
         { itemId, runId: run.runId },
         this.findToolArgs(productToolCallId),
         productToolCallId,
-        (mimeType, data) => this.history.putBlob(this.sessionId, mimeType, data)
+        (mimeType, data) => this.history.putBlob(this.sessionId, mimeType, data),
+        executionPlan
       );
       this.updateRun((activeRun) => activeRun.items.push(result));
       this.history.savePiToolCallReference(this.sessionId, itemId, message.toolCallId);

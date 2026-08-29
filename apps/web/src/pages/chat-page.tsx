@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { Archive, Loader2, MessageSquareOff, Send, Square } from 'lucide-react';
 import { useDefaultLayout } from 'react-resizable-panels';
@@ -7,11 +7,16 @@ import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
 import { PendingMessages } from '@/components/chat/pending-messages';
+import { SessionExecutionPlanView } from '@/components/chat/session-execution-plan';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useChatSession } from '@/hooks/use-chat-session';
-import { selectEditableUserItemId, selectSessionTitle } from '@/state/chat-session-selectors';
+import {
+  selectEditableUserItemId,
+  selectRunMarker,
+  selectSessionTitle,
+} from '@/state/chat-session-selectors';
 import type { SessionUnavailableReason } from '@/state/chat-session-state';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 import { useHubConnection } from '@/hooks/use-hub-connection';
@@ -172,24 +177,34 @@ function ChatWorkspace({
   const [forkingRunId, setForkingRunId] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLElement>(null);
   const followsOutputRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasTranscript = (state.history?.runs.length ?? 0) > 0;
   const sidebarTitle = sessionList.sessions.find((session) => session.id === sessionId)?.title;
   const sessionTitle = selectSessionTitle(state, sidebarTitle);
   const editableUserItemId = selectEditableUserItemId(state);
+  const runMarker = selectRunMarker(state);
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
   }, [sessionTitle]);
 
-  useEffect(() => {
-    if (followsOutputRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: state.isRunning ? 'smooth' : 'auto' });
+  // useLayoutEffect：滚动必须在绘制前完成，否则新内容先画出、下一帧才滚，出现可见抖动。
+  // 流式事件高频到达，smooth 动画反复重启只会永远落后于内容增长，必须即时贴底。
+  // 跟随被用户关闭时不动视图，但用户已回到底部附近则重新贴底并恢复跟随
+  //（不依赖 scroll 事件顺序，避免回滚到底部遇上内容爆发时永远无法恢复跟随的竞态）。
+  useLayoutEffect(() => {
+    const element = transcriptRef.current;
+    if (
+      element &&
+      !followsOutputRef.current &&
+      element.scrollHeight - element.scrollTop - element.clientHeight > 80
+    ) {
+      return;
     }
-  }, [
-    state.history,
-    state.isRunning,
-  ]);
+    bottomRef.current?.scrollIntoView();
+    followsOutputRef.current = true;
+  }, [state.history]);
 
   useEffect(() => {
     void refreshSessionList();
@@ -251,8 +266,8 @@ function ChatWorkspace({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 px-5">
-        <div className="mr-auto min-w-0">
+      <header className="flex h-14 shrink-0 items-center border-b border-border/70 px-5">
+        <div className="mx-auto w-full max-w-3xl min-w-0">
           <h2 className="truncate text-sm font-semibold">{sessionTitle}</h2>
         </div>
       </header>
@@ -263,23 +278,28 @@ function ChatWorkspace({
         onScroll={() => {
           const element = transcriptRef.current;
           if (!element) return;
-          followsOutputRef.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+          const gap = element.scrollHeight - element.scrollTop - element.clientHeight;
+          // 向上滚且离开底部超过阈值才是用户主动离开；内容收缩时浏览器 clamp
+          // scrollTop 也产生 top 下移，但那时 gap 仍贴着 0，不能误判为离开
+          if (lastScrollTopRef.current - element.scrollTop > 1 && gap > 80) {
+            followsOutputRef.current = false;
+          }
+          lastScrollTopRef.current = element.scrollTop;
         }}
       >
         <div className="mx-auto max-w-3xl">
-          {!state.loading && !hasTranscript ? (
-            <div className="flex min-h-[45vh] flex-col items-center justify-center gap-5 text-center">
-              <div>
-                <h3 className="text-base font-semibold">开始一段新对话</h3>
-                <p className="mt-1 text-sm text-muted-foreground">本地 Pi Agent 已准备就绪</p>
+          {!state.loading && !hasTranscript && !runMarker ? (
+            <div className="flex min-h-[45vh] flex-col items-center justify-center gap-7 text-center">
+              <div className="space-y-3">
+                <h3 className="font-display text-4xl font-bold tracking-wide">有什么事，吩咐吧。</h3>
+                <p className="text-sm text-muted-foreground">驴打滚在本机待命，对话不会离开这台电脑</p>
               </div>
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
                 {SUGGESTIONS.map((suggestion) => (
                   <button
                     key={suggestion}
                     type="button"
-                    className="rounded-md bg-muted/70 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                    className="rounded-full border border-border bg-card px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
                     onClick={() => setInput(suggestion)}
                   >
                     {suggestion}
@@ -291,6 +311,7 @@ function ChatWorkspace({
             <ChatTranscript
               history={state.history}
               loading={state.loading}
+              runMarker={runMarker}
               editableUserItemId={editableUserItemId}
               editing={editing}
               forkingRunId={forkingRunId}
@@ -316,6 +337,7 @@ function ChatWorkspace({
 
       <footer className="shrink-0 bg-background px-5 py-3">
         <div className="mx-auto max-w-3xl">
+          <SessionExecutionPlanView plan={state.history?.executionPlan ?? null} />
           {state.session?.modelWarning ? (
             <p role="status" className="mb-2 text-xs text-muted-foreground">
               {state.session.modelWarning}
@@ -324,7 +346,7 @@ function ChatWorkspace({
           <div
             role="group"
             aria-label="消息输入区"
-            className="rounded-md border border-input bg-background transition-shadow focus-within:ring-2 focus-within:ring-ring"
+            className="rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/10"
           >
             <PendingMessages
               messages={state.session?.pendingMessages ?? []}
@@ -354,6 +376,8 @@ function ChatWorkspace({
               }
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
+                // 旧版 Safari 会提前结束组合态，但仍用 229 标识输入法按键。
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   handleSend();
@@ -398,9 +422,10 @@ function ChatWorkspace({
                 <Button
                   size="icon"
                   variant="outline"
+                  className="rounded-lg"
                   disabled={state.aborting}
-                      title="停止"
-                      aria-label="停止"
+                  title="停止"
+                  aria-label="停止"
                   onClick={() => {
                     void abort().then((texts) => {
                       setInput((draft) => prependDraft(texts, draft));
@@ -416,6 +441,7 @@ function ChatWorkspace({
               ) : (
                 <Button
                   size="icon"
+                  className="rounded-lg"
                   disabled={
                     !input.trim() ||
                     state.sending ||

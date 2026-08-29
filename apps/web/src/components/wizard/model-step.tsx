@@ -1,24 +1,23 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, Loader2 } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 
 import type { ModelInfo } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
 
-import { SearchableList } from './searchable-list';
+import { SearchableList } from '@/components/common/searchable-list';
 
 interface ModelStepProps {
   provider: string;
   modelId: string;
   onSelect: (id: string) => void;
-  saving: boolean;
   onBack: () => void;
-  onFinish: () => void;
+  onNext: () => void;
 }
 
 /**
- * 展示模型选择和保存步骤。
+ * 展示模型选择步骤。
  *
  * @param props - Provider、当前模型和步骤回调
  * @returns 模型选择步骤元素
@@ -53,11 +52,10 @@ export function ModelStep(props: ModelStepProps): React.JSX.Element {
         </Button>
         <Button
           className="flex-1"
-          disabled={!props.modelId || props.saving}
-          onClick={props.onFinish}
+          disabled={!props.modelId}
+          onClick={props.onNext}
         >
-          {props.saving ? <Loader2 className="size-4 animate-spin" /> : null}
-          完成
+          下一步
         </Button>
       </div>
     </>

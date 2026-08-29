@@ -33,6 +33,7 @@ import {
 import { PiAgentSessionAdapter } from './pi-agent-session-adapter';
 import { createAutoSessionTitleExtension } from '../extensions/auto-session-title/auto-session-title-extension';
 import { createPendingMessageExtension } from '../extensions/pending-messages/pending-message-extension';
+import { loadTodoExtension } from '../extensions/todo/todo-extension';
 
 const INFRA_PROVIDERS = new Set([
   'faux',
@@ -43,7 +44,7 @@ const INFRA_PROVIDERS = new Set([
 ]);
 
 const DEFAULT_SYSTEM_PROMPT = '你是驴打滚,运行在用户电脑上的个人 AI 管家。回答简洁、直接、用中文。';
-const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write'];
+const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write', 'todo'];
 
 /**
  * 创建基于 Pi SDK 的 Agent Hub。
@@ -75,24 +76,32 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
   /**
    * 使用指定 Pi SessionManager 创建完整会话 Runtime。
    *
-   * @param config - 当前模型配置
+   * @param settings - 当前模型服务配置
    * @param piSessionManager - 新建或打开的 Pi 持久化会话管理器
    * @returns Hub 会话适配器
    */
   const createHubSession = async (
-    config: Parameters<AgentHubAdapter['createSession']>[0],
+    settings: Parameters<AgentHubAdapter['createSession']>[0],
     piSessionManager: PiSessionManager
   ): Promise<AgentSessionAdapter> => {
     const pendingMessages = createPendingMessageExtension();
+    const todoExtension = await loadTodoExtension();
     const runtime = await getRuntime();
-    if (config.apiKey) {
-      await runtime.setRuntimeApiKey(config.provider, config.apiKey);
+    // 为所有已配置 Provider 注入凭据：任一 Provider 配好后，其名下模型都应可用。
+    for (const entry of settings.providers) {
+      if (entry.apiKey) {
+        await runtime.setRuntimeApiKey(entry.provider, entry.apiKey);
+      }
     }
     const availableModels = await runtime.getAvailable();
 
-    const defaultModel = runtime.getModel(config.provider, config.modelId);
+    // 默认模型可能指向已删除或未配置凭据的 Provider，此时回退到第一个可用模型。
+    const configuredDefault = settings.defaultModel
+      ? runtime.getModel(settings.defaultModel.provider, settings.defaultModel.id)
+      : undefined;
+    const defaultModel = configuredDefault ?? availableModels[0];
     if (!defaultModel) {
-      throw new Error(`未找到模型:${config.provider}/${config.modelId}`);
+      throw new Error('没有可用模型：请先在设置页配置 Provider 凭据');
     }
     const storedContext = piSessionManager.buildSessionContext();
     const storedReference = storedContext.model;
@@ -133,7 +142,11 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
         resourceLoaderOptions: {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           noExtensions: true,
-          extensionFactories: [pendingMessages.extension, createAutoSessionTitleExtension(runtime)],
+          extensionFactories: [
+            pendingMessages.extension,
+            ...(todoExtension ? [todoExtension] : []),
+            createAutoSessionTitleExtension(runtime),
+          ],
           noSkills: true,
           noPromptTemplates: true,
           noThemes: true,
@@ -236,15 +249,13 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
       return provider.getModels().map((model) => ({ id: model.id, name: model.name }));
     },
 
-    async testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult> {
+    async testConnection(providerId: string, apiKey: string, modelId: string): Promise<TestConnectionResult> {
       const runtime = await getRuntime();
 
-      const model = runtime
-        .getProviders()
-        .find((item) => item.id === providerId)
-        ?.getModels()[0];
+      // 用用户实际选中的模型测试：目录第一个模型可能是服务端不存在的死模型（404），测了也不算数
+      const model = runtime.getModel(providerId, modelId);
       if (!model) {
-        return { ok: false, message: `未找到 provider:${providerId}` };
+        return { ok: false, message: `未找到模型:${providerId}/${modelId}` };
       }
 
       const stream = runtime.streamSimple(

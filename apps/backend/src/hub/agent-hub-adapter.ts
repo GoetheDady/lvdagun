@@ -6,7 +6,7 @@ import type {
   AgentSessionState,
   AgentStreamEvent,
   ModelReference,
-  ModelConfig,
+  ModelSettings,
   ModelInfo,
   ProviderInfo,
   SessionSnapshotEvent,
@@ -242,9 +242,10 @@ export interface AgentHubAdapter {
    *
    * @param providerId - Provider id
    * @param apiKey - 待测试的 API Key
+   * @param modelId - 待测试的模型 id
    * @returns 连接测试结果
    */
-  testConnection(providerId: string, apiKey: string): Promise<TestConnectionResult>;
+  testConnection(providerId: string, apiKey: string, modelId: string): Promise<TestConnectionResult>;
 
   /**
    * 列出驴打滚数据目录中的全部持久化会话。
@@ -254,35 +255,35 @@ export interface AgentHubAdapter {
   listSessions(): Promise<StoredSessionSummary[]>;
 
   /**
-   * 按模型配置创建会话。
+   * 按模型服务配置创建会话。
    *
-   * @param config - 模型配置
+   * @param settings - 模型服务配置
    * @returns 就绪的 Hub 会话
    * @throws 模型不存在或初始化失败
    */
-  createSession(config: ModelConfig): Promise<AgentSessionAdapter>;
+  createSession(settings: ModelSettings): Promise<AgentSessionAdapter>;
 
   /**
    * 按不透明标识打开一个已有持久化会话。
    *
-   * @param config - 当前全局模型配置
+   * @param settings - 当前模型服务配置
    * @param sessionId - 会话标识
    * @returns 就绪的 Hub 会话
    * @throws 会话不存在、模型不存在或初始化失败
    */
-  openSession(config: ModelConfig, sessionId: string): Promise<AgentSessionAdapter>;
+  openSession(settings: ModelSettings, sessionId: string): Promise<AgentSessionAdapter>;
 
   /**
    * 从源会话指定助手回复创建独立持久化会话。
    *
-   * @param config - 当前全局模型配置
+   * @param settings - 当前模型服务配置
    * @param sourceSessionId - 源会话标识
    * @param entryId - 要保留到的助手回复条目标识
    * @param title - 派生会话标题
    * @returns 独立的 Hub 会话
    */
   forkSession(
-    config: ModelConfig,
+    settings: ModelSettings,
     sourceSessionId: string,
     entryId: string,
     title: string

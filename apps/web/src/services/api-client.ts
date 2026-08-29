@@ -5,7 +5,7 @@ import {
   type CreateSessionResult,
   type EditResendResult,
   type ForkSessionResult,
-  type ModelConfig,
+  type ModelSettings,
   type ModelInfo,
   type ModelReference,
   type ProviderInfo,
@@ -19,13 +19,13 @@ import { getRpcConnection } from '@/services/rpc-client';
 
 /** 本地服务 JSON-RPC 操作集合 */
 export const api = {
-  getConfig: (): Promise<ModelConfig | null> => getRpcConnection().request('config/get'),
+  getConfig: (): Promise<ModelSettings> => getRpcConnection().request('config/get'),
 
-  saveConfig: (config: ModelConfig): Promise<void> =>
-    getRpcConnection().request('config/update', config),
+  saveConfig: (settings: ModelSettings): Promise<void> =>
+    getRpcConnection().request('config/update', settings),
 
-  testConnection: (provider: string, apiKey: string): Promise<TestConnectionResult> =>
-    getRpcConnection().request('catalog/testConnection', { provider, apiKey }),
+  testConnection: (provider: string, apiKey: string, modelId: string): Promise<TestConnectionResult> =>
+    getRpcConnection().request('catalog/testConnection', { provider, apiKey, modelId }),
 
   listProviders: (): Promise<ProviderInfo[]> => getRpcConnection().request('catalog/listProviders'),
 

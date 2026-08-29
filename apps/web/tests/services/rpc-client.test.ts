@@ -195,6 +195,7 @@ describe('RpcConnection', () => {
           runs: [],
           draft: null,
           blobs: {},
+          executionPlan: null,
         },
         state: {
           sessionName: null,

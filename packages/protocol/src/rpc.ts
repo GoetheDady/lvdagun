@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import type {
   AbortSessionResult,
   AgentSessionState,
@@ -11,15 +13,15 @@ import type {
   ThinkingLevel,
 } from './chat.ts';
 import type {
-  ModelConfig,
   ModelInfo,
   ModelReference,
+  ModelSettings,
   ProviderInfo,
   TestConnectionResult,
 } from './model.ts';
 
-/** 驴打滚 JSON-RPC 应用协议版本。 */
-export const RPC_PROTOCOL_VERSION = 1;
+/** 驴打滚 JSON-RPC 应用协议版本。config/get、config/update 改为模型服务配置时升到 2。 */
+export const RPC_PROTOCOL_VERSION = 2;
 /** WebSocket 握手使用的驴打滚子协议名称。 */
 export const RPC_WEBSOCKET_SUBPROTOCOL = 'lvdagun-jsonrpc';
 /** WebSocket JSON-RPC 入口。 */
@@ -80,8 +82,8 @@ export interface SessionListEventParams {
 export interface RpcMethodParams {
   initialize: InitializeParams;
   'config/get': undefined;
-  'config/update': ModelConfig;
-  'catalog/testConnection': { provider: string; apiKey: string };
+  'config/update': ModelSettings;
+  'catalog/testConnection': { provider: string; apiKey: string; modelId: string };
   'catalog/listProviders': undefined;
   'catalog/listModels': { provider: string };
   'session/list': undefined;
@@ -107,7 +109,7 @@ export interface RpcMethodParams {
 
 export interface RpcMethodResult {
   initialize: InitializeResult;
-  'config/get': ModelConfig | null;
+  'config/get': ModelSettings;
   'config/update': null;
   'catalog/testConnection': TestConnectionResult;
   'catalog/listProviders': ProviderInfo[];
@@ -148,33 +150,168 @@ export class RpcValidationError extends Error {
   }
 }
 
-const RPC_METHODS = new Set<RpcMethod>([
-  'initialize',
-  'config/get',
-  'config/update',
-  'catalog/testConnection',
-  'catalog/listProviders',
-  'catalog/listModels',
-  'session/list',
-  'session/subscribe',
-  'session/unsubscribe',
-  'session/create',
-  'session/archive',
-  'session/delete',
-  'session/messages',
-  'session/fork',
-  'session/editResend',
-  'session/state',
-  'session/rename',
-  'session/prompt',
-  'session/abort',
-  'session/pending/steer',
-  'session/pending/remove',
-  'session/pending/take',
-  'session/pending/discard',
-  'session/thinkingLevel',
-  'session/model',
+/**
+ * trim 后非空的字符串；不做 trim 转换，保留原始值。
+ */
+const NonEmptyString = z.string().refine((value) => value.trim() !== '', {
+  message: '必须是非空字符串',
+});
+
+const RpcIdSchema = z.union([z.string(), z.number().refine(Number.isFinite)]);
+const RecordSchema = z.record(z.string(), z.unknown());
+const NullResult = z.null();
+
+const ModelReferenceSchema = z.object({ provider: NonEmptyString, id: NonEmptyString });
+
+const ProviderCredentialSchema = z.object({
+  provider: NonEmptyString,
+  apiKey: z.string(),
+});
+
+const ModelSettingsSchema = z.object({
+  providers: z.array(ProviderCredentialSchema),
+  defaultModel: ModelReferenceSchema.nullable(),
+});
+
+const NamedItemSchema = z.object({ id: z.string(), name: z.string() });
+
+const SessionSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  createdAt: z.number().refine(Number.isFinite),
+  updatedAt: z.number().refine(Number.isFinite),
+  messageCount: z.number().int(),
+  isRunning: z.boolean(),
+});
+
+const AvailableModelSchema = z.object({
+  provider: z.string(),
+  providerName: z.string(),
+  id: z.string(),
+  name: z.string(),
+});
+
+const SessionStateSchema = z.object({
+  sessionName: z.string().nullable(),
+  executionAvailable: z.boolean(),
+  isRunning: z.boolean(),
+  activeCompaction: RecordSchema.nullable(),
+  pendingMessages: z.array(z.unknown()),
+  thinkingLevel: z.string(),
+  availableThinkingLevels: z.array(z.string()),
+  model: AvailableModelSchema,
+  availableModels: z.array(AvailableModelSchema),
+  modelWarning: z.string().nullable(),
+});
+
+const ExecutionPlanSchema = z.object({
+  steps: z.array(
+    z.object({
+      id: z.number().int(),
+      subject: z.string(),
+      description: z.string().optional(),
+      activeForm: z.string().optional(),
+      status: z.enum(['pending', 'in_progress', 'completed']),
+    })
+  ),
+});
+
+const ProductHistorySchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: z.string(),
+  branchId: z.string(),
+  revision: z.number().int(),
+  runs: z.array(z.unknown()),
+  draft: RecordSchema.nullable(),
+  blobs: RecordSchema,
+  executionPlan: ExecutionPlanSchema.nullable(),
+});
+
+const TestConnectionSchema = z.union([
+  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(false), message: z.string() }),
 ]);
+
+const InitializeParamsSchema = z.object({
+  protocolVersion: z.number().int(),
+  clientInfo: z.object({ name: NonEmptyString, version: NonEmptyString }),
+  capabilities: RecordSchema,
+});
+
+const InitializeResultSchema = z.object({
+  protocolVersion: z.number().int(),
+  serverInfo: z.object({ name: NonEmptyString, version: NonEmptyString }),
+  capabilities: RecordSchema,
+});
+
+const SessionParamsSchema = z.object({ sessionId: NonEmptyString });
+/** 无参数方法仍接受空的 params 占位对象，与旧协议行为一致。 */
+const NoParamsSchema = z.union([z.undefined(), RecordSchema]);
+
+/** 每个方法的 params 校验 schema；键即协议方法全集，isRpcMethod 由此派生。 */
+const RPC_METHOD_PARAMS: Record<RpcMethod, z.ZodType> = {
+  initialize: InitializeParamsSchema,
+  'config/get': NoParamsSchema,
+  'config/update': ModelSettingsSchema,
+  'catalog/testConnection': z.object({ provider: NonEmptyString, apiKey: z.string(), modelId: NonEmptyString }),
+  'catalog/listProviders': NoParamsSchema,
+  'catalog/listModels': z.object({ provider: NonEmptyString }),
+  'session/list': NoParamsSchema,
+  'session/subscribe': SessionParamsSchema,
+  'session/unsubscribe': z.union([
+    z.object({ scope: z.literal('session'), sessionId: NonEmptyString }),
+    z.object({ scope: z.literal('list') }),
+  ]),
+  'session/create': NoParamsSchema,
+  'session/archive': SessionParamsSchema,
+  'session/delete': SessionParamsSchema,
+  'session/messages': SessionParamsSchema,
+  'session/fork': SessionParamsSchema.extend({ runId: NonEmptyString }),
+  'session/editResend': SessionParamsSchema.extend({ itemId: NonEmptyString, text: NonEmptyString }),
+  'session/state': SessionParamsSchema,
+  'session/rename': SessionParamsSchema.extend({ title: NonEmptyString }),
+  'session/prompt': SessionParamsSchema.extend({ text: NonEmptyString }),
+  'session/abort': SessionParamsSchema,
+  'session/pending/steer': SessionParamsSchema.extend({ messageId: NonEmptyString }),
+  'session/pending/remove': SessionParamsSchema.extend({ messageId: NonEmptyString }),
+  'session/pending/take': SessionParamsSchema,
+  'session/pending/discard': SessionParamsSchema,
+  'session/thinkingLevel': SessionParamsSchema.extend({ level: NonEmptyString }),
+  'session/model': SessionParamsSchema.extend({ model: ModelReferenceSchema }),
+};
+
+/** 每个方法的结果校验 schema，深度与旧 wire contract 保持一致。 */
+const RPC_METHOD_RESULTS: Record<RpcMethod, z.ZodType> = {
+  initialize: InitializeResultSchema,
+  'config/get': ModelSettingsSchema,
+  'config/update': NullResult,
+  'catalog/testConnection': TestConnectionSchema,
+  'catalog/listProviders': z.array(NamedItemSchema),
+  'catalog/listModels': z.array(NamedItemSchema),
+  'session/list': z.array(SessionSummarySchema),
+  'session/subscribe': z.object({
+    type: z.literal('session_snapshot'),
+    history: ProductHistorySchema,
+    state: SessionStateSchema,
+  }),
+  'session/unsubscribe': NullResult,
+  'session/create': z.object({ sessionId: NonEmptyString }),
+  'session/archive': NullResult,
+  'session/delete': NullResult,
+  'session/messages': ProductHistorySchema,
+  'session/fork': z.object({ sessionId: NonEmptyString }),
+  'session/editResend': z.object({ history: ProductHistorySchema }),
+  'session/state': SessionStateSchema,
+  'session/rename': NullResult,
+  'session/prompt': z.object({ accepted: z.literal(true) }),
+  'session/abort': z.object({ restoredTexts: z.array(z.string()) }),
+  'session/pending/steer': NullResult,
+  'session/pending/remove': NullResult,
+  'session/pending/take': z.object({ texts: z.array(z.string()) }),
+  'session/pending/discard': NullResult,
+  'session/thinkingLevel': SessionStateSchema,
+  'session/model': SessionStateSchema,
+};
 
 /**
  * 判断方法名是否属于当前协议版本。
@@ -183,7 +320,7 @@ const RPC_METHODS = new Set<RpcMethod>([
  * @returns 是否为已知方法
  */
 export function isRpcMethod(method: string): method is RpcMethod {
-  return RPC_METHODS.has(method as RpcMethod);
+  return Object.hasOwn(RPC_METHOD_PARAMS, method);
 }
 
 /**
@@ -194,24 +331,16 @@ export function isRpcMethod(method: string): method is RpcMethod {
  * @throws `RpcValidationError` 当信封不合法
  */
 export function parseRpcRequest(value: unknown): RpcRequest {
-  if (
-    !isRecord(value) ||
-    value.jsonrpc !== '2.0' ||
-    !isRpcId(value.id) ||
-    typeof value.method !== 'string' ||
-    value.method === ''
-  ) {
-    throw new RpcValidationError('Invalid Request');
-  }
-  if (
-    'params' in value &&
-    value.params !== undefined &&
-    !isRecord(value.params) &&
-    !Array.isArray(value.params)
-  ) {
-    throw new RpcValidationError('params 必须是对象或数组');
-  }
-  return value as unknown as RpcRequest;
+  const result = z
+    .object({
+      jsonrpc: z.literal('2.0'),
+      id: RpcIdSchema,
+      method: NonEmptyString,
+      params: z.union([RecordSchema, z.array(z.unknown())]).optional(),
+    })
+    .safeParse(value);
+  if (!result.success) throw new RpcValidationError('Invalid Request');
+  return value as RpcRequest;
 }
 
 /**
@@ -223,94 +352,7 @@ export function parseRpcRequest(value: unknown): RpcRequest {
  * @throws `RpcValidationError` 当参数不符合方法契约
  */
 export function assertRpcMethodParams(method: RpcMethod, value: unknown): void {
-  if (
-    method === 'config/get' ||
-    method === 'catalog/listProviders' ||
-    method === 'session/list' ||
-    method === 'session/create'
-  ) {
-    if (value !== undefined && !isRecord(value)) {
-      throw new RpcValidationError('该方法不接受位置参数');
-    }
-    return;
-  }
-
-  const params = requireRecord(value);
-  switch (method) {
-    case 'initialize': {
-      if (!Number.isInteger(params.protocolVersion)) {
-        throw new RpcValidationError('protocolVersion 必须是整数');
-      }
-      const clientInfo = requireRecord(params.clientInfo);
-      requireString(clientInfo, 'name');
-      requireString(clientInfo, 'version');
-      requireRecord(params.capabilities);
-      return;
-    }
-    case 'config/update':
-      requireString(params, 'provider');
-      requireString(params, 'modelId');
-      requireString(params, 'apiKey', true);
-      return;
-    case 'catalog/testConnection':
-      requireString(params, 'provider');
-      requireString(params, 'apiKey', true);
-      return;
-    case 'catalog/listModels':
-      requireString(params, 'provider');
-      return;
-    case 'session/unsubscribe':
-      if (params.scope !== 'session' && params.scope !== 'list') {
-        throw new RpcValidationError('scope 必须是 session 或 list');
-      }
-      if (params.scope === 'session') requireString(params, 'sessionId');
-      return;
-    case 'session/fork':
-      requireString(params, 'sessionId');
-      requireString(params, 'runId');
-      return;
-    case 'session/editResend':
-      requireString(params, 'sessionId');
-      requireString(params, 'itemId');
-      requireString(params, 'text');
-      return;
-    case 'session/rename':
-      requireString(params, 'sessionId');
-      requireString(params, 'title');
-      return;
-    case 'session/prompt':
-      requireString(params, 'sessionId');
-      requireString(params, 'text');
-      return;
-    case 'session/pending/steer':
-    case 'session/pending/remove':
-      requireString(params, 'sessionId');
-      requireString(params, 'messageId');
-      return;
-    case 'session/thinkingLevel':
-      requireString(params, 'sessionId');
-      requireString(params, 'level');
-      return;
-    case 'session/model': {
-      requireString(params, 'sessionId');
-      const model = requireRecord(params.model);
-      requireString(model, 'provider');
-      requireString(model, 'id');
-      return;
-    }
-    case 'session/subscribe':
-    case 'session/archive':
-    case 'session/delete':
-    case 'session/messages':
-    case 'session/state':
-    case 'session/abort':
-    case 'session/pending/take':
-    case 'session/pending/discard':
-      requireString(params, 'sessionId');
-      return;
-    default:
-      return;
-  }
+  validate(RPC_METHOD_PARAMS[method], value);
 }
 
 /**
@@ -322,79 +364,15 @@ export function assertRpcMethodParams(method: RpcMethod, value: unknown): void {
  * @throws `RpcValidationError` 当结果不符合方法契约
  */
 export function assertRpcMethodResult(method: RpcMethod, value: unknown): void {
-  switch (method) {
-    case 'initialize': {
-      const result = requireRecord(value);
-      if (!Number.isInteger(result.protocolVersion)) {
-        throw new RpcValidationError('protocolVersion 必须是整数');
-      }
-      const serverInfo = requireRecord(result.serverInfo);
-      requireString(serverInfo, 'name');
-      requireString(serverInfo, 'version');
-      requireRecord(result.capabilities);
-      return;
-    }
-    case 'config/get':
-      if (value !== null) assertModelConfig(value);
-      return;
-    case 'config/update':
-    case 'session/unsubscribe':
-    case 'session/archive':
-    case 'session/delete':
-    case 'session/rename':
-    case 'session/pending/steer':
-    case 'session/pending/remove':
-    case 'session/pending/discard':
-      if (value !== null) throw new RpcValidationError('方法结果必须是 null');
-      return;
-    case 'catalog/testConnection': {
-      const result = requireRecord(value);
-      if (result.ok === true) return;
-      if (result.ok === false && typeof result.message === 'string') return;
-      throw new RpcValidationError('连接测试结果不合法');
-    }
-    case 'catalog/listProviders':
-    case 'catalog/listModels':
-      if (!isArrayOf(value, isNamedItem)) {
-        throw new RpcValidationError('目录结果不合法');
-      }
-      return;
-    case 'session/list':
-      if (!isArrayOf(value, isSessionSummary)) {
-        throw new RpcValidationError('会话列表结果不合法');
-      }
-      return;
-    case 'session/subscribe':
-      assertSessionSnapshot(value);
-      return;
-    case 'session/create':
-    case 'session/fork':
-      requireString(requireRecord(value), 'sessionId');
-      return;
-    case 'session/messages':
-      assertProductHistory(value);
-      return;
-    case 'session/editResend':
-      assertProductHistory(requireRecord(value).history);
-      return;
-    case 'session/state':
-    case 'session/thinkingLevel':
-    case 'session/model':
-      assertSessionState(value);
-      return;
-    case 'session/prompt':
-      if (requireRecord(value).accepted !== true) {
-        throw new RpcValidationError('提示准入结果不合法');
-      }
-      return;
-    case 'session/abort':
-      assertStringArray(requireRecord(value).restoredTexts, 'restoredTexts');
-      return;
-    case 'session/pending/take':
-      assertStringArray(requireRecord(value).texts, 'texts');
-      return;
-  }
+  validate(RPC_METHOD_RESULTS[method], value);
 }
+
+const ServerErrorSchema = z.object({ code: z.number().int(), message: z.string() });
+const SessionEventParamsSchema = z.object({
+  sessionId: NonEmptyString,
+  event: z.object({ type: z.string() }),
+});
+const SessionListEventParamsSchema = z.object({ sessions: z.array(SessionSummarySchema) });
 
 /**
  * 校验服务端发给客户端的 JSON-RPC 信封和通知参数。
@@ -409,141 +387,48 @@ export function parseRpcServerMessage(
   if (!isRecord(value) || value.jsonrpc !== '2.0') {
     throw new RpcValidationError('服务端消息缺少 jsonrpc 2.0 标记');
   }
+  // result/error 的存在性互斥无法用 unknown 字段区分，信封互斥检查保留手写。
   if ('id' in value) {
     const hasResult = 'result' in value;
     const hasError = 'error' in value;
     if (hasResult === hasError || (!isRpcId(value.id) && !(hasError && value.id === null))) {
       throw new RpcValidationError('服务端响应信封不合法');
     }
-    if (hasError) {
-      const error = requireRecord(value.error);
-      if (!Number.isInteger(error.code) || typeof error.message !== 'string') {
-        throw new RpcValidationError('JSON-RPC error 不合法');
-      }
-    }
+    if (hasError) validate(ServerErrorSchema, value.error);
     return value as unknown as RpcSuccess | RpcError;
   }
   if (value.method === 'session/event') {
-    const params = requireRecord(value.params);
-    requireString(params, 'sessionId');
-    const event = requireRecord(params.event);
-    requireString(event, 'type');
+    validate(SessionEventParamsSchema, value.params);
     return value as unknown as RpcServerNotification;
   }
   if (value.method === 'session/listEvent') {
-    const params = requireRecord(value.params);
-    if (!Array.isArray(params.sessions) || !params.sessions.every(isSessionSummary)) {
-      throw new RpcValidationError('session/listEvent 的 sessions 不合法');
-    }
+    validate(SessionListEventParamsSchema, value.params);
     return value as unknown as RpcServerNotification;
   }
   throw new RpcValidationError('未知的服务端通知');
+}
+
+/**
+ * 用 schema 校验值，失败时抛出统一的协议校验错误。
+ *
+ * @param schema - 目标 schema
+ * @param value - 待校验值
+ * @throws `RpcValidationError` 附带首个 issue 的路径与原因
+ */
+function validate(schema: z.ZodType, value: unknown): void {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    if (!issue) throw new RpcValidationError('消息不合法');
+    const path = issue.path.join('.');
+    throw new RpcValidationError(path ? `${path}: ${issue.message}` : issue.message);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function requireRecord(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) throw new RpcValidationError('params 必须是对象');
-  return value;
-}
-
-function requireString(record: Record<string, unknown>, key: string, allowEmpty = false): string {
-  const value = record[key];
-  if (typeof value !== 'string' || (!allowEmpty && value.trim() === '')) {
-    throw new RpcValidationError(`${key} 必须是${allowEmpty ? '' : '非空'}字符串`);
-  }
-  return value;
-}
-
 function isRpcId(value: unknown): value is string | number {
   return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value));
-}
-
-function isSessionSummary(value: unknown): value is SessionSummary {
-  return (
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.title === 'string' &&
-    typeof value.createdAt === 'number' &&
-    Number.isFinite(value.createdAt) &&
-    typeof value.updatedAt === 'number' &&
-    Number.isFinite(value.updatedAt) &&
-    Number.isInteger(value.messageCount) &&
-    typeof value.isRunning === 'boolean'
-  );
-}
-
-function assertModelConfig(value: unknown): void {
-  const config = requireRecord(value);
-  requireString(config, 'provider');
-  requireString(config, 'modelId');
-  requireString(config, 'apiKey', true);
-}
-
-function assertSessionSnapshot(value: unknown): void {
-  const snapshot = requireRecord(value);
-  if (snapshot.type !== 'session_snapshot') {
-    throw new RpcValidationError('会话快照类型不合法');
-  }
-  assertProductHistory(snapshot.history);
-  assertSessionState(snapshot.state);
-}
-
-function assertProductHistory(value: unknown): asserts value is ProductSessionHistory {
-  const history = requireRecord(value);
-  if (
-    history.schemaVersion !== 1 ||
-    typeof history.sessionId !== 'string' ||
-    typeof history.branchId !== 'string' ||
-    !Number.isInteger(history.revision) ||
-    !Array.isArray(history.runs) ||
-    (history.draft !== null && !isRecord(history.draft)) ||
-    !isRecord(history.blobs)
-  ) {
-    throw new RpcValidationError('产品会话历史结果不合法');
-  }
-}
-
-function assertSessionState(value: unknown): void {
-  const state = requireRecord(value);
-  if (
-    (state.sessionName !== null && typeof state.sessionName !== 'string') ||
-    typeof state.executionAvailable !== 'boolean' ||
-    typeof state.isRunning !== 'boolean' ||
-    (state.activeCompaction !== null && !isRecord(state.activeCompaction)) ||
-    !Array.isArray(state.pendingMessages) ||
-    typeof state.thinkingLevel !== 'string' ||
-    !isArrayOf(state.availableThinkingLevels, (level) => typeof level === 'string') ||
-    !isAvailableModel(state.model) ||
-    !isArrayOf(state.availableModels, isAvailableModel) ||
-    (state.modelWarning !== null && typeof state.modelWarning !== 'string')
-  ) {
-    throw new RpcValidationError('会话状态结果不合法');
-  }
-}
-
-function isAvailableModel(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.provider === 'string' &&
-    typeof value.providerName === 'string' &&
-    typeof value.id === 'string' &&
-    typeof value.name === 'string'
-  );
-}
-
-function isNamedItem(value: unknown): boolean {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string';
-}
-
-function isArrayOf(value: unknown, predicate: (item: unknown) => boolean): value is unknown[] {
-  return Array.isArray(value) && value.every(predicate);
-}
-
-function assertStringArray(value: unknown, key: string): void {
-  if (!isArrayOf(value, (item) => typeof item === 'string')) {
-    throw new RpcValidationError(`${key} 必须是字符串数组`);
-  }
 }

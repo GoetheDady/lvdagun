@@ -9,11 +9,13 @@ beforeEach(() => request.mockReset());
 
 describe('JSON-RPC 客户端', () => {
   it('通过 RPC 读取配置', async () => {
-    request.mockResolvedValue({ provider: 'anthropic', apiKey: 'k', modelId: 'm' });
+    request.mockResolvedValue({
+      providers: [{ provider: 'anthropic', apiKey: 'k' }],
+      defaultModel: { provider: 'anthropic', id: 'm' },
+    });
     await expect(api.getConfig()).resolves.toEqual({
-      provider: 'anthropic',
-      apiKey: 'k',
-      modelId: 'm',
+      providers: [{ provider: 'anthropic', apiKey: 'k' }],
+      defaultModel: { provider: 'anthropic', id: 'm' },
     });
     expect(request).toHaveBeenCalledWith('config/get');
   });

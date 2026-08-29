@@ -20,6 +20,7 @@ export type {
   ProductAssistantBlock,
   ProductAssistantSegmentItem,
   ProductCompactionItem,
+  ProductExecutionPlanVisibilityItem,
   ProductHistoryDraft,
   ProductImageBlock,
   ProductRetryItem,
@@ -31,6 +32,9 @@ export type {
   ProductToolDraft,
   ProductToolResultItem,
   ProductUserMessageItem,
+  SessionExecutionPlan,
+  SessionExecutionPlanStep,
+  SessionExecutionPlanStepStatus,
   SessionArchivedEvent,
   SessionDeletedEvent,
   SessionHistoryChangedEvent,
@@ -47,7 +51,8 @@ export type {
 export { PRODUCT_HISTORY_SCHEMA_VERSION } from './chat.ts';
 export type {
   AvailableModel,
-  ModelConfig,
+  ProviderCredential,
+  ModelSettings,
   ModelInfo,
   ModelReference,
   ProviderInfo,

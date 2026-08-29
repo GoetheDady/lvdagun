@@ -13,12 +13,13 @@ interface ApiKeyStepProps {
   testing: boolean;
   testResult: TestConnectionResult | null;
   onTest: () => void;
+  saving: boolean;
   onBack: () => void;
-  onNext: () => void;
+  onFinish: () => void;
 }
 
 /**
- * 展示 API Key 输入和连接测试步骤。
+ * 展示 API Key 输入、连接测试和保存步骤。
  *
  * @param props - 凭证、测试状态和步骤回调
  * @returns API Key 步骤元素
@@ -60,10 +61,11 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
         </Button>
         <Button
           className="flex-1"
-          disabled={props.testResult === null || !props.testResult.ok || props.testing}
-          onClick={props.onNext}
+          disabled={props.saving || props.testResult === null || !props.testResult.ok}
+          onClick={props.onFinish}
         >
-          下一步
+          {props.saving ? <Loader2 className="size-4 animate-spin" /> : null}
+          完成
         </Button>
       </div>
     </>

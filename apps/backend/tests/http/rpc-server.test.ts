@@ -53,9 +53,9 @@ async function initialize(rpc: ReturnType<typeof openRpc>): Promise<void> {
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
-    params: { protocolVersion: 1, clientInfo: { name: 'test', version: '1' }, capabilities: {} },
+    params: { protocolVersion: 2, clientInfo: { name: 'test', version: '1' }, capabilities: {} },
   });
-  await expect(rpc.next()).resolves.toMatchObject({ id: 1, result: { protocolVersion: 1 } });
+  await expect(rpc.next()).resolves.toMatchObject({ id: 1, result: { protocolVersion: 2 } });
 }
 
 describe('JSON-RPC WebSocket', () => {
@@ -77,7 +77,12 @@ describe('JSON-RPC WebSocket', () => {
         id: 2,
         result: {
           type: 'session_snapshot',
-          history: { schemaVersion: 1, sessionId: 'session-1', runs: [] },
+          history: {
+            schemaVersion: 1,
+            sessionId: 'session-1',
+            runs: [],
+            executionPlan: null,
+          },
         },
       });
     } finally {

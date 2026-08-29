@@ -6,36 +6,40 @@
 @source '../../../../node_modules/streamdown/dist/*.js';
 
 :root {
-  --background: #fcfaf5;
-  --foreground: #302824;
-  --card: #fffefb;
-  --card-foreground: #302824;
-  --popover: #fffefb;
-  --popover-foreground: #302824;
-  --primary: #8f3040;
-  --primary-foreground: #fffaf3;
-  --secondary: #f2e5cf;
-  --secondary-foreground: #4a342d;
-  --muted: #f5efe5;
-  --muted-foreground: #75675d;
-  --accent: #efdfc1;
-  --accent-foreground: #5d2b33;
+  /* 米纸:对话画布 */
+  --background: #f5efe2;
+  --foreground: #35271f;
+  --card: #fdfaf4;
+  --card-foreground: #35271f;
+  --popover: #fdfaf4;
+  --popover-foreground: #35271f;
+  /* 豆沙红:用户的话语与主动作 */
+  --primary: #8a2e3c;
+  --primary-foreground: #fff8f0;
+  --secondary: #efe0c8;
+  --secondary-foreground: #5a3d2e;
+  --muted: #ece4d3;
+  --muted-foreground: #75634f;
+  --accent: #f0dfc0;
+  --accent-foreground: #6b2430;
   --destructive: #b42332;
-  --border: #e5dac9;
-  --input: #d6c4aa;
-  --ring: #8f3040;
-  --radius: 0.5rem;
-  --soy: #c79732;
-  --soy-foreground: #4b3519;
+  --border: #e2d4bb;
+  --input: #d3c1a0;
+  --ring: #8a2e3c;
+  --radius: 0.625rem;
+  /* 豆面金:Agent 的劳动痕迹(工具、思考、计划) */
+  --soy: #b5861f;
+  --soy-foreground: #6e5312;
+  --soy-wash: #f6ecd7;
   --wood: #9e7f5a;
-  --sidebar: #f7f0e4;
-  --sidebar-foreground: #382e28;
-  --sidebar-primary: #8f3040;
-  --sidebar-primary-foreground: #fffaf3;
-  --sidebar-accent: #ecdfcc;
+  --sidebar: #efe7d4;
+  --sidebar-foreground: #3a2c22;
+  --sidebar-primary: #8a2e3c;
+  --sidebar-primary-foreground: #fff8f0;
+  --sidebar-accent: #e5d8bd;
   --sidebar-accent-foreground: #4a342d;
-  --sidebar-border: #d4c2a8;
-  --sidebar-ring: #8f3040;
+  --sidebar-border: #dccdac;
+  --sidebar-ring: #8a2e3c;
 }
 
 @theme inline {
@@ -59,13 +63,15 @@
   --color-ring: var(--ring);
   --color-soy: var(--soy);
   --color-soy-foreground: var(--soy-foreground);
+  --color-soy-wash: var(--soy-wash);
   --color-wood: var(--wood);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-heading: var(--font-sans);
-  --font-sans: 'Inter Variable', sans-serif;
+  /* 宋体只用于品牌与大标题:招牌感来自衬线,正文仍是黑体保证小字号可读 */
+  --font-display: 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', 'SimSun', serif;
+  --font-sans: 'Inter Variable', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -94,5 +100,73 @@ body,
   }
   html {
     @apply font-sans;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--soy) 28%, transparent);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--sidebar-border);
+    border: 3px solid transparent;
+    border-radius: 5px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--input);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* 助手回复的 markdown 排版:Tailwind preflight 会把标题/链接/行内代码重置成正文，
+     这里恢复阅读层级;块级间距由容器 space-y 统一管，不在这里加 margin 防止双倍间距 */
+  .chat-markdown {
+    & h1 {
+      font-size: 1.25rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    & h2 {
+      font-size: 1.125rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    & h3,
+    & h4 {
+      font-size: 1rem;
+      font-weight: 650;
+    }
+    & a {
+      color: var(--primary);
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, var(--primary) 40%, transparent);
+      text-underline-offset: 3px;
+    }
+    & a:hover {
+      text-decoration-color: var(--primary);
+    }
+    & code:not(pre code) {
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 0.85em;
+      background: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 6px);
+      padding: 0.1em 0.35em;
+    }
+    & img {
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) - 2px);
+    }
   }
 }

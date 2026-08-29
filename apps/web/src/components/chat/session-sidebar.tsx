@@ -93,7 +93,7 @@ export function SessionSidebar({
             src="/brand/logo-512.png"
             width="32"
           />
-          <h1 className="truncate text-sm font-semibold">驴打滚</h1>
+          <h1 className="font-display truncate text-[17px] font-bold tracking-wide">驴打滚</h1>
         </div>
 
         <div className="p-3">
@@ -118,8 +118,8 @@ export function SessionSidebar({
                 key={session.id}
                 className={`group relative mb-1 flex w-full items-stretch rounded-md transition-colors ${
                   active
-                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-sm'
-                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground before:absolute before:top-1/2 before:left-0 before:h-4.5 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-primary'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
                 }`}
               >
                 <button
@@ -129,10 +129,10 @@ export function SessionSidebar({
                   className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 pr-10 text-left"
                   onClick={() => onSelect(session.id)}
                 >
-                  <MessageSquare className="size-4 shrink-0" />
+                  <MessageSquare className={`size-4 shrink-0 ${active ? 'text-primary' : ''}`} />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{session.title}</span>
+                      <span className={`truncate text-sm ${active ? 'font-semibold' : 'font-medium'}`}>{session.title}</span>
                       {session.isRunning ? (
                         <span
                           className="size-1.5 shrink-0 animate-pulse rounded-full bg-soy"
@@ -142,7 +142,7 @@ export function SessionSidebar({
                       ) : null}
                     </span>
                     <span
-                      className={`block text-[11px] ${active ? 'text-sidebar-primary-foreground/70' : 'text-muted-foreground'}`}
+                      className={`block text-[11px] ${active ? 'text-sidebar-accent-foreground/60' : 'text-muted-foreground'}`}
                     >
                       {DATE_FORMATTER.format(session.updatedAt)}
                     </span>
@@ -156,7 +156,11 @@ export function SessionSidebar({
                       aria-label={`更多操作：${session.title}`}
                       className="absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
                     >
-                      {mutating ? <Loader2 className="size-4 animate-spin" /> : <Ellipsis />}
+                      {mutating ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Ellipsis className="size-4" />
+                      )}
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" aria-label={`${session.title}会话操作`}>
@@ -278,7 +282,7 @@ const HUB_CONNECTION_PRESENTATION: Record<
   connected: { label: 'Hub 已连接', dotClassName: 'bg-emerald-500 text-emerald-500' },
   connecting: {
     label: 'Hub 正在连接',
-    dotClassName: 'animate-pulse bg-amber-400 text-amber-400',
+    dotClassName: 'bg-amber-400 text-amber-400',
   },
   failed: {
     label: 'Hub 连接失败，点击重连',
@@ -302,7 +306,7 @@ function HubConnectionIndicator({
   const presentation = HUB_CONNECTION_PRESENTATION[status];
   const dot = (
     <span
-      className={`size-2 rounded-full shadow-[0_0_8px_currentColor] ${presentation.dotClassName}`}
+      className={`size-2 animate-pulse rounded-full shadow-[0_0_8px_currentColor] ${presentation.dotClassName}`}
     />
   );
 

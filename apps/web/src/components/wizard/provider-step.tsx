@@ -5,7 +5,7 @@ import type { ProviderInfo } from '@lvdagun/protocol';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
 
-import { SearchableList } from './searchable-list';
+import { SearchableList } from '@/components/common/searchable-list';
 
 interface ProviderStepProps {
   provider: string;

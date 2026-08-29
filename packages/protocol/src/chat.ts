@@ -39,6 +39,23 @@ export interface ProductToolCallBlock {
 
 export type ProductAssistantBlock = ProductTextBlock | ProductThinkingBlock | ProductToolCallBlock;
 
+/** 会话执行计划中的产品展示状态。 */
+export type SessionExecutionPlanStepStatus = 'pending' | 'in_progress' | 'completed';
+
+/** 上游 Todo 快照经过校验后的单个计划步骤投影。 */
+export interface SessionExecutionPlanStep {
+  id: number;
+  subject: string;
+  description?: string;
+  activeForm?: string;
+  status: SessionExecutionPlanStepStatus;
+}
+
+/** 当前分支中可向客户端展示的会话执行计划。 */
+export interface SessionExecutionPlan {
+  steps: SessionExecutionPlanStep[];
+}
+
 /** 用户提交并被 Hub 接受的消息。 */
 export interface ProductUserMessageItem {
   type: 'user_message';
@@ -70,6 +87,16 @@ export interface ProductToolResultItem {
   args: unknown;
   content: Array<ProductTextBlock | ProductImageBlock>;
   isError: boolean;
+  /** 仅 Todo 工具结果携带；null 表示合法清空，缺失表示不是合法 Todo 快照。 */
+  executionPlan?: SessionExecutionPlan | null;
+}
+
+/** 下一次模型调用开始后隐藏已经全部完成的计划。 */
+export interface ProductExecutionPlanVisibilityItem {
+  type: 'execution_plan_visibility';
+  itemId: string;
+  runId: string;
+  createdAt: number;
 }
 
 /** 自动重试在失败位置留下的稳定记录。 */
@@ -101,7 +128,8 @@ export type ProductTimelineItem =
   | ProductAssistantSegmentItem
   | ProductToolResultItem
   | ProductRetryItem
-  | ProductCompactionItem;
+  | ProductCompactionItem
+  | ProductExecutionPlanVisibilityItem;
 
 /** 一次完整助手回复及其内部时间线。 */
 export interface ProductAgentRun {
@@ -141,6 +169,7 @@ export interface ProductSessionHistory {
   runs: ProductAgentRun[];
   draft: ProductHistoryDraft | null;
   blobs: Record<string, { mimeType: string; data: string }>;
+  executionPlan: SessionExecutionPlan | null;
 }
 
 export interface SessionHistoryChangedEvent {

@@ -5,6 +5,48 @@
 [`99f6f02`](https://github.com/deepseek-ai/deepseek-harness/tree/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca)，
 避免 `master` 后续变化使引用失真。
 
+> 2026-08-28 复核:RC7 之后新增 `dsh-v0.1.0-rc.8`、`dsh-v0.1.1-rc.1/rc.2`、
+> `dsh-v0.1.2-alpha.1` 三个发布,复核结论见[下方复核小节](#2026-08-28-复核),
+> 原判断不变。复核引文固定到 master HEAD
+> [`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/tree/cd5ef8148158)。
+
+## 2026-08-28 复核
+
+针对「是否有必要把底座从 Pi 换成 DeepSeek Harness」重新核对 RC7 之后全部发布
+(`dsh-v0.1.0-rc.8`、`dsh-v0.1.1-rc.1/rc.2`、`dsh-v0.1.2-alpha.1`,均为 prerelease)
+与 master HEAD [`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/tree/cd5ef8148158)。
+
+**结论维持:现阶段没有替换的必要。** 当时列出的四个决定性缺口在 master 上原样存在:
+
+1. 仍无协议版本协商,握手 `serverInfo.version` 固定 `0.0.1` 且不被校验,无兼容性承诺
+   ([协议限制](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158/packages/sdk/protocol/README.md#known-limitations-and-deferred-work))。
+2. 仍无 prompt cancel 与 session close,放弃一次运行只能关闭整个 runtime;SDK wire
+   仍只有 `initialize` / `session/prompt` / `shutdown` 三个方法,`session/prompt`
+   只返回入队回执,没有 per-prompt result
+   ([协议限制](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158/packages/sdk/protocol/README.md#known-limitations-and-deferred-work)、
+   [客户端限制](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158/packages/sdk/client/README.md#known-limitations-and-deferred-work))。
+3. 仍无 pi-style 会话树,官方明确 "deferred unless a consumer needs more than
+   boundary-based forking";`SESSION_FORMAT_VERSION` 仍固定 `0`,未知事件类型
+   fail-closed 拒绝重建
+   ([会话限制](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158/packages/core/session/README.md#known-limitations-and-deferred-work))。
+4. 本项目 08-18 之后继续加深 Pi 集成(产品会话历史、自动标题、待处理消息、Hub 重构、
+   JSON-RPC 迁移),且路线图上的会话分支/回退/派生会话恰好依赖 Pi 原生 entry tree——
+   正是 Harness deferred 的能力,切换成本进一步上升而收益未出现。
+
+RC7 → v0.1.2-alpha.1 的迭代集中在 Web UI、多模态与子代理方向,补充的新证据
+均为不利:
+
+- v0.1.2-alpha.1 移除旧版 APIProxy 并要求统一迁移到 `@Remote` 网关——官方自己的
+  Web Host API 层也在破坏性更名,印证 pre-release 期间任何 surface 都可能变。
+- rc.8 对 SQLite 持久化做了数据结构不兼容变更;v0.1.2-alpha.1 前后引入会话事件
+  词汇 fail-closed 策略(未知事件拒绝重建),旧记录迁移面继续收窄。
+- 官方更新安全说明,明确 Harness 尚未接受安全审计,沙箱、审批与权限控制不能保证
+  隔离;同时发布品牌规范,声明 "DeepSeek Harness" 为注册商标。
+
+重新评估的触发条件与原结论一致:官方 wire 具备版本协商、prompt cancel、
+session close 并给出兼容性政策,或项目出现必须依赖其插件化运行时/子代理后端的
+具体需求,再启动 sidecar POC。
+
 ## 结论
 
 **现阶段不建议把 DeepSeek Harness 当作 Pi Agent SDK 的直接替代品。**
@@ -33,12 +75,12 @@ Code Mode、组合式沙箱/工具 provider 或其多种 subagent backend 时，
 ## 对驴打滚当前实现的判断
 
 驴打滚已经通过 `Hub`/`HubSession` 把 HTTP 会话管理与 Pi 运行时创建隔开，这个边界
-可以保留；但边界内部并不是一个薄模型 adapter。`createHub()` 同时使用 Pi 的
+可以保留;但边界内部并不是一个薄模型 adapter。`createHub()` 同时使用 Pi 的
 `ModelRuntime`、凭据、模型目录、`AgentSessionRuntime`、`SessionManager`、
-`SettingsManager`、默认工具和内置 Extension，`PiHubSession` 又直接依赖 Pi 的事件、
+`SettingsManager`、默认工具和内置 Extension,`PiHubSession` 又直接依赖 Pi 的事件、
 队列、压缩、消息投影、模型切换和标题生成能力。
-[Hub 创建](../../apps/backend/src/hub/create-hub.ts)，
-[会话适配](../../apps/backend/src/hub/pi-hub-session.ts)
+[Hub 创建](../../apps/backend/src/hub/agent-hub.ts),
+[会话适配](../../apps/backend/src/hub/pi-agent-hub-adapter.ts)
 
 耦合还跨过了名义上的共享协议边界：`packages/protocol` 直接导出 Pi 的
 `AgentMessage`、`ThinkingLevel` 和 `JsonAgentSessionEvent`，Web 客户端 reducer 按 Pi

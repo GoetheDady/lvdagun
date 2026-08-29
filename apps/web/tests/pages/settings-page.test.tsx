@@ -1,8 +1,9 @@
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Navigate, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import SettingsPage from '@/pages/settings-page';
+import SettingsPage, { AboutPanel } from '@/pages/settings-page';
+import ModelServicePage from '@/pages/model-service-page';
 import { api } from '@/services/api-client';
 
 vi.mock('@/services/api-client', () => ({
@@ -12,44 +13,47 @@ vi.mock('@/services/api-client', () => ({
     testConnection: vi.fn(),
     listProviders: vi.fn(),
     listModels: vi.fn(),
-    getMessages: vi.fn(),
-    prompt: vi.fn(),
-    clearSession: vi.fn(),
   },
 }));
 
 beforeEach(() => {
-  vi.mocked(api.listProviders).mockResolvedValue([]);
-  vi.mocked(api.listModels).mockResolvedValue([]);
+  vi.mocked(api.getConfig).mockResolvedValue({
+    providers: [{ provider: 'deepseek', apiKey: 'sk-97d14c368c4c446180b0506238af2c84' }],
+    defaultModel: { provider: 'deepseek', id: 'deepseek-v4-flash' },
+  });
+  vi.mocked(api.listProviders).mockResolvedValue([{ id: 'deepseek', name: 'DeepSeek' }]);
+  vi.mocked(api.listModels).mockResolvedValue([{ id: 'deepseek-v4-flash', name: 'DeepSeek V4' }]);
 });
 
-describe('SettingsPage', () => {
-  it('展示当前配置,API Key 掩码显示', async () => {
-    vi.mocked(api.getConfig).mockResolvedValue({
-      provider: 'deepseek',
-      apiKey: 'sk-97d14c368c4c446180b0506238af2c84',
-      modelId: 'deepseek-v4-flash',
-    });
-    render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    );
+function renderSettings(path = '/settings'): void {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/settings" element={<SettingsPage />}>
+          <Route index element={<Navigate to="model" replace />} />
+          <Route path="model" element={<ModelServicePage />} />
+          <Route path="about" element={<AboutPanel />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  );
+}
 
-    await screen.findByText('Provider:deepseek');
-    expect(screen.getByText('Model:deepseek-v4-flash')).toBeInTheDocument();
-    expect(screen.getByText('API Key:sk-97****2c84')).toBeInTheDocument();
-    // 完整 Key 不出现在页面上
-    expect(screen.queryByText(/sk-97d14c368c4c446180b0506238af2c84/)).not.toBeInTheDocument();
+describe('SettingsPage 布局', () => {
+  it('左侧是分区导航,右侧默认落在模型服务', async () => {
+    renderSettings('/settings/model');
+
+    expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /模型服务/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /关于/ })).toBeInTheDocument();
+    await screen.findByText('默认模型');
   });
 
-  it('未配置时显示占位', async () => {
-    vi.mocked(api.getConfig).mockResolvedValue(null);
-    render(
-      <MemoryRouter>
-        <SettingsPage />
-      </MemoryRouter>
-    );
-    await screen.findByText('尚未配置');
+  it('关于分区展示产品信息与隐私说明', async () => {
+    renderSettings('/settings/about');
+
+    await screen.findByText('驴打滚');
+    expect(screen.getByText('V0 · 个人 AI 管家')).toBeInTheDocument();
+    expect(screen.getByText(/对话数据只存本机/)).toBeInTheDocument();
   });
 });

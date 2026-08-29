@@ -115,6 +115,14 @@ vi.mock('node:fs/promises', () => ({
   },
 }));
 
+vi.mock('../../src/extensions/todo/todo-extension', () => ({
+  loadTodoExtension: async () => ({
+    name: 'lvdagun-session-execution-plan',
+    hidden: true,
+    factory: () => undefined,
+  }),
+}));
+
 vi.mock('@earendil-works/pi-coding-agent', () => {
   const modelRuntime = {
     getProvider: (providerId: string) =>
@@ -427,7 +435,7 @@ describe('createPiAgentHubAdapter 连接测试', () => {
   it('写入运行时凭证并返回连接结果', async () => {
     pi.state.streamResult = { stopReason: 'stop' };
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    await expect(hub.testConnection('anthropic', 'sk-test')).resolves.toEqual({ ok: true });
+    await expect(hub.testConnection('anthropic', 'sk-test', 'claude-a')).resolves.toEqual({ ok: true });
     expect(pi.state.streamApiKeys).toEqual(['sk-test']);
     expect(pi.state.loginCalls).toEqual([
       { provider: 'anthropic', type: 'api_key', apiKey: 'sk-test' },
@@ -441,7 +449,7 @@ describe('createPiAgentHubAdapter 连接测试', () => {
   it('把 Pi stopReason=error 转换为连接失败', async () => {
     pi.state.streamResult = { stopReason: 'error', errorMessage: '401 凭证无效' };
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    await expect(hub.testConnection('anthropic', 'sk-bad')).resolves.toEqual({
+    await expect(hub.testConnection('anthropic', 'sk-bad', 'claude-a')).resolves.toEqual({
       ok: false,
       message: '401 凭证无效',
     });
@@ -461,10 +469,10 @@ describe('createPiAgentHubAdapter 会话能力', () => {
     ];
   });
 
-  it('启用 Pi 默认工具并关闭范围外资源', async () => {
+  it('启用 Pi 默认工具和 Todo 并关闭范围外资源', async () => {
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    await hub.createSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' });
-    expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write']);
+    await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
+    expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write', 'todo']);
     expect(pi.state.resourceLoaderOptions).toMatchObject({
       noExtensions: true,
       noSkills: true,
@@ -474,6 +482,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
     });
     expect(pi.state.resourceLoaderOptions?.extensionFactories).toEqual([
       expect.objectContaining({ name: 'lvdagun-pending-messages', hidden: true }),
+      expect.objectContaining({ name: 'lvdagun-session-execution-plan', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
     ]);
     expect(pi.state.persistedFiles).toEqual([
@@ -493,11 +502,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       models: [{ id: 'gpt-a', name: 'GPT A' }],
     });
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
+    const session = await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
     const events: AgentSessionAdapterEvent[] = [];
     session.subscribe((event) => events.push(event));
 
@@ -571,10 +576,10 @@ describe('createPiAgentHubAdapter 会话能力', () => {
         messageCount: 2,
       },
     ]);
-    await hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'older');
+    await hub.openSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } }, 'older');
     expect(pi.state.openSessionPaths).toEqual(['/tmp/lvdagun-test/sessions/older.jsonl']);
     await expect(
-      hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'missing')
+      hub.openSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } }, 'missing')
     ).rejects.toThrow('会话不存在:missing');
   });
 
@@ -611,7 +616,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       },
     ]);
     await expect(
-      hub.openSession({ provider: 'anthropic', apiKey: '', modelId: 'claude-a' }, 'archived')
+      hub.openSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } }, 'archived')
     ).rejects.toThrow('会话已归档:archived');
     await expect(hub.deleteSession('archived')).rejects.toThrow('会话已归档:archived');
 
@@ -641,7 +646,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     const session = await hub.openSession(
-      { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
+      { providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } },
       'saved'
     );
 
@@ -667,7 +672,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
 
     const session = await hub.openSession(
-      { provider: 'anthropic', apiKey: '', modelId: 'claude-a' },
+      { providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } },
       'saved'
     );
 
@@ -690,11 +695,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       },
     ];
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
+    const session = await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
     const events: AgentSessionAdapterEvent[] = [];
     session.subscribe((event) => events.push(event));
 
@@ -718,11 +719,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
   it('跟踪自动压缩，并在中止时同时取消压缩和 Agent 运行', async () => {
     pi.state.sessionEvents = [{ type: 'compaction_start', reason: 'threshold' }];
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
+    const session = await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
 
     await session.prompt('你好');
     expect(session.getState()).toMatchObject({
@@ -764,11 +761,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       },
     ];
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
-    const session = await hub.createSession({
-      provider: 'anthropic',
-      apiKey: '',
-      modelId: 'claude-a',
-    });
+    const session = await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
 
     expect(session.getExecutionHistory()).toEqual([
       {

@@ -4,7 +4,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type {
   AgentSessionState,
   AvailableModel,
-  ModelConfig,
+  ModelSettings,
   ThinkingLevel,
 } from '@lvdagun/protocol';
 import type { Express } from 'express';
@@ -25,10 +25,9 @@ import { attachRpcServer } from '../../src/http/rpc-server';
 import { createServer } from '../../src/http/server';
 import { MemoryHistoryRepository } from '../history/memory-history-repository';
 
-export const validConfig: ModelConfig = {
-  provider: 'anthropic',
-  apiKey: 'sk-test',
-  modelId: 'claude-a',
+export const validConfig: ModelSettings = {
+  providers: [{ provider: 'anthropic', apiKey: 'sk-test' }],
+  defaultModel: { provider: 'anthropic', id: 'claude-a' },
 };
 
 const model: AvailableModel = {

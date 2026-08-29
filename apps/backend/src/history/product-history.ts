@@ -4,6 +4,7 @@ import type {
   AgentStreamEvent,
   ProductAgentRun,
   ProductHistoryDraft,
+  ProductExecutionPlanVisibilityItem,
   ProductSessionHistory,
   ProductTimelineItem,
   SessionHistoryChangedEvent,
@@ -178,7 +179,30 @@ export class ProductHistory {
       runs: structuredClone(this.resolveRuns(session)),
       draft: structuredClone(this.drafts.get(sessionId) ?? null),
       blobs: this.repository.loadBlobs(sessionId),
+      executionPlan: structuredClone(this.resolveExecutionPlan(session)),
     };
+  }
+
+  /**
+   * 在下一次模型调用开始时隐藏已经全部完成的会话执行计划。
+   *
+   * @param sessionId - 产品会话
+   */
+  hideCompletedExecutionPlan(sessionId: string): void {
+    const session = this.requireActiveSession(sessionId);
+    const plan = this.resolveExecutionPlan(session);
+    if (!plan || !plan.steps.every((step) => step.status === 'completed')) return;
+    this.commit(sessionId, (current) => {
+      const run = this.resolveRuns(current).at(-1);
+      if (!run || (run.status !== 'accepted' && run.status !== 'running')) return;
+      const item: ProductExecutionPlanVisibilityItem = {
+        type: 'execution_plan_visibility',
+        itemId: randomUUID(),
+        runId: run.runId,
+        createdAt: Date.now(),
+      };
+      run.items.push(item);
+    });
   }
 
   /** @param sessionId - 产品会话 @param listener - 产品事件监听器 @returns 退订函数 */
@@ -508,6 +532,21 @@ export class ProductHistory {
       return [...parentRuns.slice(0, cutoff), ...branch.runs];
     };
     return resolve(this.currentBranch(session));
+  }
+
+  /** @param session - 会话 @returns 当前分支最后一份合法且仍可见的计划投影 */
+  private resolveExecutionPlan(
+    session: StoredProductSession
+  ): ProductSessionHistory['executionPlan'] {
+    let plan: ProductSessionHistory['executionPlan'] = null;
+    for (const item of this.resolveRuns(session).flatMap((run) => run.items)) {
+      if (item.type === 'tool_result' && item.toolName === 'todo' && 'executionPlan' in item) {
+        plan = item.executionPlan ?? null;
+      } else if (item.type === 'execution_plan_visibility') {
+        plan = null;
+      }
+    }
+    return plan;
   }
 
   /** @param sessionId - 会话 @param mutate - 修改 */

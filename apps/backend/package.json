@@ -14,8 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-agent-core": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3",
+    "@juicesharp/rpiv-todo": "2.6.4",
     "@lvdagun/protocol": "workspace:*",
     "express": "^5.1.0",
     "ws": "^8.21.3"

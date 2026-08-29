@@ -8,7 +8,7 @@ import {
   RPC_PROTOCOL_VERSION,
   RPC_WEBSOCKET_SUBPROTOCOL,
   RpcValidationError,
-  type ModelConfig,
+  type ModelSettings,
   type RpcError,
   type RpcMethodParams,
   type RpcRequest,
@@ -192,10 +192,14 @@ async function dispatch(
     case 'config/get':
       return agentHub.getConfig();
     case 'config/update':
-      await agentHub.updateConfig(p as unknown as ModelConfig);
+      await agentHub.updateConfig(p as unknown as ModelSettings);
       return null;
     case 'catalog/testConnection':
-      return agentHub.testConnection(stringParam(p, 'provider'), stringParam(p, 'apiKey'));
+      return agentHub.testConnection(
+        stringParam(p, 'provider'),
+        stringParam(p, 'apiKey'),
+        stringParam(p, 'modelId')
+      );
     case 'catalog/listProviders':
       return agentHub.listProviders();
     case 'catalog/listModels':

@@ -227,6 +227,72 @@ describe('ProductHistory', () => {
 });
 
 describe('ProductHistoryRecorder', () => {
+  it('持久化最后一份合法 Todo 投影并在下次模型调用隐藏已完成计划', () => {
+    const history = makeHistory();
+    const session = new FakeSession('pi-a');
+    history.acceptPrompt('session-a', '完成复杂工作');
+    new ProductHistoryRecorder(history, 'session-a', session, vi.fn()).attach();
+    session.emit({ type: 'agent_start' });
+    session.emit({
+      type: 'message_end',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'todo-a',
+        toolName: 'todo',
+        content: [{ type: 'text', text: 'Updated #1' }],
+        details: {
+          action: 'update',
+          params: { id: 1, status: 'completed' },
+          tasks: [{ id: 1, subject: '完成实现', status: 'completed' }],
+          nextId: 2,
+        },
+        isError: false,
+        timestamp: 3,
+      },
+    });
+    expect(history.getSnapshot('session-a').executionPlan).toEqual({
+      steps: [{ id: 1, subject: '完成实现', status: 'completed' }],
+    });
+
+    session.emit({ type: 'turn_start' });
+    expect(history.getSnapshot('session-a').executionPlan).toBeNull();
+  });
+
+  it('非法 Todo 快照保留上一份合法投影', () => {
+    const history = makeHistory();
+    const session = new FakeSession('pi-a');
+    history.acceptPrompt('session-a', '完成复杂工作');
+    new ProductHistoryRecorder(history, 'session-a', session, vi.fn()).attach();
+    session.emit({ type: 'agent_start' });
+    const emitTodo = (details: unknown, toolCallId: string) =>
+      session.emit({
+        type: 'message_end',
+        message: {
+          role: 'toolResult',
+          toolCallId,
+          toolName: 'todo',
+          content: [{ type: 'text', text: 'Todo' }],
+          details,
+          isError: false,
+          timestamp: 3,
+        },
+      });
+    emitTodo(
+      {
+        action: 'create',
+        params: { subject: '实现功能' },
+        tasks: [{ id: 1, subject: '实现功能', status: 'in_progress' }],
+        nextId: 2,
+      },
+      'todo-a'
+    );
+    emitTodo({ action: 'update', params: {}, tasks: 'invalid', nextId: 2 }, 'todo-b');
+
+    expect(history.getSnapshot('session-a').executionPlan).toEqual({
+      steps: [{ id: 1, subject: '实现功能', status: 'in_progress' }],
+    });
+  });
+
   it('将 Pi 工具调用标识留在后端并向产品历史分配稳定标识', () => {
     const repository = new MemoryHistoryRepository();
     const history = new ProductHistory(repository);

@@ -61,6 +61,7 @@ function history(revision = 0): ProductSessionHistory {
     runs: [],
     draft: null,
     blobs: {},
+    executionPlan: null,
   };
 }
 

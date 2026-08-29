@@ -58,6 +58,7 @@ beforeEach(() => {
     runs: [],
     draft: null,
     blobs: {},
+    executionPlan: null,
   });
   vi.mocked(api.getSessionState).mockResolvedValue({
     sessionName: null,
@@ -84,11 +85,16 @@ beforeEach(() => {
     modelWarning: null,
   });
   vi.mocked(api.listProviders).mockResolvedValue([]);
+  vi.mocked(api.listModels).mockResolvedValue([]);
+  vi.mocked(api.getConfig).mockResolvedValue({
+    providers: [{ provider: 'anthropic', apiKey: 'k' }],
+    defaultModel: { provider: 'anthropic', id: 'm' },
+  });
 });
 
 describe('App 路由与守卫', () => {
   it('未配置时首页重定向到配置向导', async () => {
-    vi.mocked(api.getConfig).mockResolvedValue(null);
+    vi.mocked(api.getConfig).mockResolvedValue({ providers: [], defaultModel: null });
     renderApp('/');
     // 向导第一步:出现"选择模型服务商"步骤标题
     await screen.findByText('选择模型服务商', { exact: false });
@@ -96,9 +102,8 @@ describe('App 路由与守卫', () => {
 
   it('已配置时首页直接进入对话页', async () => {
     vi.mocked(api.getConfig).mockResolvedValue({
-      provider: 'anthropic',
-      apiKey: 'k',
-      modelId: 'm',
+      providers: [{ provider: 'anthropic', apiKey: 'k' }],
+      defaultModel: { provider: 'anthropic', id: 'm' },
     });
     renderApp('/');
     await screen.findByPlaceholderText(/输入消息/);
