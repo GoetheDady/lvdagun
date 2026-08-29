@@ -439,13 +439,17 @@ export class ProductHistory {
     this.requireSession(sessionId);
     if (draft) this.drafts.set(sessionId, draft);
     else this.drafts.delete(sessionId);
-    const pending = this.draftTimers.get(sessionId);
-    if (pending) clearTimeout(pending);
     if (draft === null) {
+      // null（流结束、等待重试）需要立刻收敛：取消挂起广播并同步发出
+      const pending = this.draftTimers.get(sessionId);
+      if (pending) clearTimeout(pending);
       this.draftTimers.delete(sessionId);
       this.emitDraft(sessionId);
       return;
     }
+    // 尾随节流而非防抖：窗口内已有挂起广播时只更新内存草稿，不重置计时器；
+    // 若重置，连续 delta（间隔小于窗口）会把广播无限推迟，客户端直到停顿才一次性收到全文
+    if (this.draftTimers.has(sessionId)) return;
     const timer = setTimeout(() => this.emitDraft(sessionId), DRAFT_EMIT_DELAY_MS);
     timer.unref();
     this.draftTimers.set(sessionId, timer);

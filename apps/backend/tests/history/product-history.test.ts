@@ -204,6 +204,32 @@ describe('ProductHistory', () => {
     expect(events[0]!.runId).toBe('r3');
   });
 
+  it('连续 delta 期间按合并窗口稳定广播，新 delta 不重置挂起的计时器', async () => {
+    const history = makeHistory();
+    const events: ProductHistoryDraft[] = [];
+    history.subscribe('session-a', (event) => {
+      if (event.type === 'session_draft_changed' && event.draft) events.push(event.draft);
+    });
+    const draft = (runId: string): ProductHistoryDraft => ({
+      runId,
+      activeSegment: null,
+      tools: [],
+      retryDeadlineAt: null,
+    });
+
+    // 模拟 Pi 逐 token 广播：15 个 delta，每 20ms 一个（间隔小于 60ms 合并窗口）
+    for (let i = 0; i < 15; i++) {
+      history.setDraft('session-a', draft(`r${i}`));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    // 防抖会把广播无限推迟到流停顿之后；节流应在生成期间持续输出
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    expect(events.length).toBeLessThanOrEqual(8);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // 最后一次广播携带最新草稿
+    expect(events.at(-1)?.runId).toBe('r14');
+  });
+
   it('清空草稿立即广播并取消挂起的延迟广播', async () => {
     const history = makeHistory();
     const events: (ProductHistoryDraft | null)[] = [];
