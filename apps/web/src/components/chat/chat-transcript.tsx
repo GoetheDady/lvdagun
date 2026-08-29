@@ -79,11 +79,6 @@ function formatTime(timestamp: number): string {
   }).format(timestamp);
 }
 
-/** @param markdown - 流式 Markdown @returns 单块 Markdown，确保跨段字符共享一条动画时间线 */
-function parseStreamingMarkdown(markdown: string): string[] {
-  return [markdown];
-}
-
 /** @param props.text - Markdown 文本 @param props.streaming - 是否流式 @returns 文本块 */
 function MarkdownText(props: { text: string; streaming?: boolean }): React.JSX.Element {
   return (
@@ -91,11 +86,6 @@ function MarkdownText(props: { text: string; streaming?: boolean }): React.JSX.E
       className="chat-markdown text-[15px] leading-7"
       mode={props.streaming ? 'streaming' : 'static'}
       isAnimating={props.streaming}
-      // Streamdown 默认按 Markdown block 分别从 delay=0 开始动画；流式时合为单块并按字符级联，
-      // 否则同一批新增内容跨段后，各段首字会同时出现。
-      // ponytail: 流式阶段单块重解析换取全局顺序；超长回复若卡顿再换跨 block 动画插件。
-      parseMarkdownIntoBlocksFn={props.streaming ? parseStreamingMarkdown : undefined}
-      animated={props.streaming ? { sep: 'char', stagger: 15, duration: 120 } : undefined}
       caret={props.streaming ? 'block' : undefined}
     >
       {props.text}

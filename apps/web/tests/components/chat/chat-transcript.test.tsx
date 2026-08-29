@@ -58,7 +58,7 @@ const transcriptProps = {
 };
 
 describe('ChatTranscript', () => {
-  it('同一批跨段新增字符沿一条时间线依次动画', async () => {
+  it('直接展示最新流式草稿，不为字符添加补间动画', async () => {
     const { container, rerender } = render(
       <ChatTranscript {...transcriptProps} history={streamingHistory('旧段落')} />
     );
@@ -72,21 +72,11 @@ describe('ChatTranscript', () => {
     );
     await waitFor(() => expect(container.textContent).toContain('第二段新增'));
 
-    const newCharacters = [...container.querySelectorAll<HTMLElement>('[data-sd-animate]')]
-      .filter((span) => span.style.getPropertyValue('--sd-duration') === '120ms')
-      .map((span) => ({
-        text: span.textContent,
-        delay: span.style.getPropertyValue('--sd-delay') || '0ms',
-      }));
-
-    expect(newCharacters).toEqual([
-      { text: '新', delay: '0ms' },
-      { text: '增', delay: '15ms' },
-      { text: '第', delay: '30ms' },
-      { text: '二', delay: '45ms' },
-      { text: '段', delay: '60ms' },
-      { text: '新', delay: '75ms' },
-      { text: '增', delay: '90ms' },
-    ]);
+    expect(container.querySelectorAll('[data-sd-animate]')).toHaveLength(0);
+    expect(
+      container
+        .querySelector<HTMLElement>('[style*="--streamdown-caret"]')
+        ?.style.getPropertyValue('--streamdown-caret')
+    ).toContain('▋');
   });
 });
