@@ -143,7 +143,7 @@ describe('JSON-RPC WebSocket', () => {
     await store.save(validConfig);
     const { baseUrl, close, history } = await startServer(hub, store);
     const runId = history.acceptPrompt('session-1', '原问题');
-    history.mutate('session-1', (session) => {
+    history.commit('session-1', (session) => {
       const run = session.branches[0]!.runs[0]!;
       run.status = 'completed';
       run.items.push({

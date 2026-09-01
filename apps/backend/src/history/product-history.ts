@@ -449,11 +449,6 @@ export class ProductHistory {
     this.draftTimers.set(sessionId, timer);
   }
 
-  /** @param sessionId - 产品会话 @param mutate - 聚合修改 */
-  mutate(sessionId: string, mutate: (session: StoredProductSession) => void): void {
-    this.commit(sessionId, mutate);
-  }
-
   /** @param sessionId - 产品会话 @param itemId - 产品条目 @param entryId - Pi 条目 */
   savePiEntryReference(sessionId: string, itemId: string, entryId: string): void {
     this.saveSourceReference(sessionId, itemId, 'pi_entry', entryId);
@@ -547,8 +542,8 @@ export class ProductHistory {
     return plan;
   }
 
-  /** @param sessionId - 会话 @param mutate - 修改 */
-  private commit(sessionId: string, mutate: (session: StoredProductSession) => void): void {
+  /** @param sessionId - 会话 @param mutate - 聚合修改 */
+  commit(sessionId: string, mutate: (session: StoredProductSession) => void): void {
     const session = this.requireActiveSession(sessionId);
     mutate(session);
     this.saveAndEmit(session);

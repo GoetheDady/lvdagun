@@ -16,7 +16,7 @@ describe('SqliteHistoryRepository', () => {
     history.beginCreate('session-a', 1);
     history.completeCreate('session-a', 'pi-a');
     history.acceptPrompt('session-a', '问题');
-    history.mutate('session-a', (session) => {
+    history.commit('session-a', (session) => {
       const run = session.branches[0]!.runs[0]!;
       run.status = 'completed';
       run.items.push({

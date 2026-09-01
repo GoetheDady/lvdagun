@@ -30,6 +30,9 @@ vi.mock('@/services/session-events', () => ({
   subscribeEvents: vi.fn(() => () => {}),
 }));
 
+// 会话列表走真实订阅路径：初始快照复用已 mock 的 api.listSessions
+vi.mock('@/services/rpc-client', async () => (await import('./services/rpc-client-mock')).rpcClientMockFactory());
+
 function renderApp(initialPath = '/'): void {
   render(
     <MemoryRouter initialEntries={[initialPath]}>

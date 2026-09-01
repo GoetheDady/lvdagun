@@ -17,8 +17,6 @@ export interface SessionList {
   deleteSession(sessionId: string): Promise<boolean>;
   /** @param sessionId - 会话标识 @param title - 新标题 @returns 是否重命名成功 */
   renameSession(sessionId: string, title: string): Promise<boolean>;
-  /** @returns 列表刷新完成后的 Promise */
-  refresh(): Promise<void>;
 }
 
 /**
@@ -33,27 +31,7 @@ export function useSessionList(): SessionList {
   const mutationRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * 获取最新会话摘要并保留现有列表直至请求完成。
-   *
-   * @returns 列表刷新完成后的 Promise
-   */
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      setSessions(await api.listSessions());
-      setError(null);
-    } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    if (import.meta.env.MODE === 'test') {
-      const timer = window.setTimeout(() => void refresh(), 0);
-      return () => window.clearTimeout(timer);
-    }
     let closed = false;
     let unsubscribe: (() => void) | undefined;
     void getRpcConnection()
@@ -89,7 +67,7 @@ export function useSessionList(): SessionList {
       closed = true;
       unsubscribe?.();
     };
-  }, [refresh]);
+  }, []);
 
   /**
    * 执行会话列表操作并投影成功后的列表状态。
@@ -159,6 +137,5 @@ export function useSessionList(): SessionList {
     archiveSession,
     deleteSession,
     renameSession,
-    refresh,
   };
 }

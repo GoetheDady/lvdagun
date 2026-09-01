@@ -89,7 +89,6 @@ function ChatWorkspace({
     setThinkingLevel,
     setModel,
   } = useChatSession(sessionId);
-  const { refresh: refreshSessionList } = sessionList;
   const [input, setInput] = useState('');
   const [editing, setEditing] = useState<{
     itemId: string;
@@ -117,7 +116,6 @@ function ChatWorkspace({
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
   }, [sessionTitle]);
-
   // 挂载后、首帧绘制前聚焦输入框：focus-within 首帧即展开，与草稿页停靠态
   // （聚焦展开 768×126）同宽同高，换页零突变；loading 期间输入框不禁用，
   // 提前打字的文本保留在本地草稿，快照未到时发不出去（按钮闸门）。
@@ -148,10 +146,6 @@ function ChatWorkspace({
     bottomRef.current?.scrollIntoView();
     followsOutputRef.current = true;
   }, [state.history]);
-
-  useEffect(() => {
-    void refreshSessionList();
-  }, [refreshSessionList, state.isRunning, state.session?.sessionName, state.unavailableReason]);
 
   if (state.unavailableReason) {
     return <UnavailableWorkspace reason={state.unavailableReason} />;
@@ -188,10 +182,9 @@ function ChatWorkspace({
   const handleFork = (runId: string): void => {
     if (forkingRunId !== null) return;
     setForkingRunId(runId);
-    void forkSession(runId).then(async (forkedSessionId) => {
+    void forkSession(runId).then((forkedSessionId) => {
       setForkingRunId(null);
       if (!forkedSessionId) return;
-      await refreshSessionList();
       navigate(`/sessions/${encodeURIComponent(forkedSessionId)}`);
     });
   };

@@ -70,7 +70,7 @@ describe('ProductHistory', () => {
   it('产品分支共享不可变前缀并使用新的产品标识', () => {
     const history = makeHistory();
     const firstRunId = history.acceptPrompt('session-a', '原问题');
-    history.mutate('session-a', (session) => {
+    history.commit('session-a', (session) => {
       const run = session.branches[0]!.runs[0]!;
       run.status = 'completed';
       run.items.push({
@@ -134,7 +134,7 @@ describe('ProductHistory', () => {
   it('派生会话为工具关联分配新的产品标识', () => {
     const history = makeHistory();
     const runId = history.acceptPrompt('session-a', '读取文件');
-    history.mutate('session-a', (session) => {
+    history.commit('session-a', (session) => {
       const run = session.branches[0]!.runs[0]!;
       run.status = 'completed';
       run.items.push(

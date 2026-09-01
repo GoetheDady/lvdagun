@@ -409,7 +409,7 @@ export class ProductHistoryRecorder {
 
   /** @param update - 对活动运行的修改 */
   private updateRun(update: (run: ProductAgentRun) => void): void {
-    this.history.mutate(this.sessionId, (session) => {
+    this.history.commit(this.sessionId, (session) => {
       const branch = session.branches.find((candidate) => candidate.id === session.currentBranchId);
       const run = branch?.runs.at(-1);
       if (!run || (run.status !== 'accepted' && run.status !== 'running')) {
