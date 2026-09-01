@@ -120,11 +120,14 @@ function ChatWorkspace({
 
   // 挂载后、首帧绘制前聚焦输入框：focus-within 首帧即展开，与草稿页停靠态
   // （聚焦展开 768×126）同宽同高，换页零突变；loading 期间输入框不禁用，
-  // 提前打字的文本保留在本地草稿，快照未到时发不出去（按钮闸门）
+  // 提前打字的文本保留在本地草稿，快照未到时发不出去（按钮闸门）。
+  // 恢复过渡的 raf 不能被只执行一次的门控拦住：StrictMode 清理会取消掉
+  // 第一次的 raf，若第二次执行提前 return，过渡将永远禁用
   useLayoutEffect(() => {
-    if (focusedOnceRef.current || state.unavailableReason) return;
-    focusedOnceRef.current = true;
-    textareaRef.current?.focus();
+    if (!focusedOnceRef.current && !state.unavailableReason) {
+      focusedOnceRef.current = true;
+      textareaRef.current?.focus();
+    }
     const raf = requestAnimationFrame(() => setComposerSettled(true));
     return () => cancelAnimationFrame(raf);
   }, [state.unavailableReason]);

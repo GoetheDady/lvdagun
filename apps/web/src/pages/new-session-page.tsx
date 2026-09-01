@@ -124,15 +124,21 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
       </header>
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {/* 问候与示例：绝对定位在上半区、内容贴着中心线，提交后淡出；
-            不占流式空间，动画载体高度只由输入区决定，保证停靠位移参照恒定 */}
+        {/* 动画载体：问候语与输入区同容器整体居中，聚焦展开时容器重排、
+            问候语被顶上去保持间距；提交后输入区保持展开形态、容器高度恒定，
+            居中→贴底是纯 top+translate 位移，跳转等动画播完才发生 */}
         <div
-          aria-hidden={submitted !== null}
-          className={`absolute inset-x-0 top-0 bottom-1/2 flex flex-col justify-end px-5 pb-10 transition-opacity duration-300 motion-reduce:transition-none ${
-            submitted === null ? 'opacity-100' : 'pointer-events-none opacity-0'
+          className={`absolute inset-x-0 px-5 pb-3 transition-[top,translate] duration-300 ease-out motion-reduce:transition-none ${
+            submitted === null ? 'top-1/2 -translate-y-1/2' : 'top-full -translate-y-full'
           }`}
         >
-          <div className="mx-auto flex max-w-3xl flex-col items-center gap-7 text-center">
+          {/* 问候与示例：提交后淡出让位（占位保留，停靠期间容器高度不受影响） */}
+          <div
+            aria-hidden={submitted !== null}
+            className={`mx-auto flex max-w-3xl flex-col items-center gap-7 pb-10 text-center transition-opacity duration-300 motion-reduce:transition-none ${
+              submitted === null ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+          >
             <div className="space-y-3">
               <h3 className="font-display text-4xl font-bold tracking-wide">有什么事，吩咐吧。</h3>
               <p className="text-sm text-muted-foreground">
@@ -152,15 +158,7 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
               ))}
             </div>
           </div>
-        </div>
 
-        {/* 动画载体只包输入区：提交态保持聚焦展开形态不收缩，容器高度恒定，
-            居中→贴底是纯 top+translate 位移，轨迹无杂讯；跳转等动画播完才发生 */}
-        <div
-          className={`absolute inset-x-0 px-5 pb-3 transition-[top,translate] duration-300 ease-out motion-reduce:transition-none ${
-            submitted === null ? 'top-1/2 -translate-y-1/2' : 'top-full -translate-y-full'
-          }`}
-        >
           {error ? (
             <div className="mx-auto mb-2 flex max-w-xl items-center gap-3 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
               <span className="min-w-0 flex-1 break-words">{error}</span>
