@@ -11,7 +11,7 @@ import type {
 
 import { SearchableList } from '@/components/common/searchable-list';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api } from '@/services/api-client';
@@ -21,6 +21,7 @@ import { maskKey } from '@/utils/mask-api-key';
  * Provider 编辑页:新建与编辑共用;编辑时 Provider 锁定,换 Provider = 删除重建。
  *
  * Key 留空表示沿用现有凭据,输入则覆盖;模型选择仅为测试连接挑选载体,不随条目持久化。
+ * 设计:这是铺子的「登记单」,测试通过后盖「验讫」章,与列表页的「默」章同属一套印章标记。
  *
  * @returns Provider 编辑页元素
  */
@@ -93,87 +94,103 @@ function ProviderEditPage(): React.JSX.Element {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{isEdit ? `编辑 ${providerName}` : '新建模型服务'}</CardTitle>
-        <CardDescription>
-          {isEdit ? '该 Provider 已锁定;想更换请删除后重新新建。' : '选择服务商并填写 API Key。'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {isEdit ? (
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      {/* 页头:登记单标题,与列表页同构 */}
+      <div className="space-y-1.5">
+        <h1 className="font-display text-2xl font-bold tracking-wide">
+          {isEdit ? `编辑 ${providerName}` : '新建模型服务'}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {isEdit
+            ? '该 Provider 已锁定;想更换请删除后重新新建。'
+            : '选择服务商、填 API Key、测试模型,登记完即可使用。'}
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="space-y-5 p-6">
+          {isEdit ? (
+            <div className="space-y-2">
+              <Label>Provider</Label>
+              {/* 编辑态:服务商锁定,米黄底只读展示,与可编辑字段区分 */}
+              <div className="flex items-baseline gap-2 rounded-md border bg-muted/40 px-3 py-2">
+                <p className="text-sm font-medium">{providerName}</p>
+                <span className="font-mono text-xs text-muted-foreground">{provider}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="provider-select">Provider</Label>
+              <SearchableList
+                placeholder="搜索服务商…"
+                items={providers}
+                selectedId={provider}
+                loadingText="加载中…"
+                emptyText="没有匹配的服务商"
+                onSelect={setProvider}
+              />
+            </div>
+          )}
+
           <div className="space-y-2">
-            <Label>Provider</Label>
-            <p className="rounded-md border px-3 py-2 text-sm">
-              {providerName}
-              <span className="ml-2 text-xs text-muted-foreground">{provider}</span>
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label htmlFor="provider-select">Provider</Label>
-            <SearchableList
-              placeholder="搜索服务商…"
-              items={providers}
-              selectedId={provider}
-              loadingText="加载中…"
-              emptyText="没有匹配的服务商"
-              onSelect={setProvider}
+            <Label htmlFor="api-key">{provider ? `${providerName} 的 API Key` : 'API Key'}</Label>
+            <Input
+              id="api-key"
+              type="password"
+              className="font-mono"
+              placeholder={existing ? `${maskKey(existing.apiKey)}(留空沿用)` : 'sk-…(本地模型可留空)'}
+              value={apiKey}
+              onChange={(event) => {
+                setApiKey(event.target.value);
+                setTestResult(null);
+              }}
             />
           </div>
-        )}
 
-        <div className="space-y-2">
-          <Label htmlFor="api-key">{provider ? `${providerName} 的 API Key` : 'API Key'}</Label>
-          <Input
-            id="api-key"
-            type="password"
-            placeholder={existing ? `${maskKey(existing.apiKey)}(留空沿用)` : 'sk-…(本地模型可留空)'}
-            value={apiKey}
-            onChange={(event) => {
-              setApiKey(event.target.value);
-              setTestResult(null);
-            }}
-          />
-        </div>
+          <div className="space-y-2">
+            <Label>测试模型</Label>
+            <SearchableList
+              placeholder="搜索模型…"
+              items={models}
+              selectedId={testModelId}
+              loadingText={provider ? '加载中…' : '先选择 Provider'}
+              emptyText="没有可用模型"
+              onSelect={setTestModelId}
+            />
+          </div>
 
-        <div className="space-y-2">
-          <Label>测试模型</Label>
-          <SearchableList
-            placeholder="搜索模型…"
-            items={models}
-            selectedId={testModelId}
-            loadingText={provider ? '加载中…' : '先选择 Provider'}
-            emptyText="没有可用模型"
-            onSelect={setTestModelId}
-          />
-        </div>
+          {testResult &&
+            (testResult.ok ? (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="inline-flex shrink-0 items-center rounded-[4px] bg-primary px-1.5 py-0.5 font-display text-xs font-bold text-primary-foreground">
+                  验讫
+                </span>
+                <span className="text-primary">连接成功</span>
+              </div>
+            ) : (
+              <p className="text-sm text-destructive">{testResult.message}</p>
+            ))}
 
-        {testResult && (
-          <p className={`text-sm ${testResult.ok ? 'text-green-600' : 'text-destructive'}`}>
-            {testResult.ok ? '连接成功' : testResult.message}
-          </p>
-        )}
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            disabled={!provider || !testModelId || testing}
-            onClick={() => void handleTest()}
-          >
-            {testing ? '测试中…' : '测试连接'}
-          </Button>
-          <div className="flex-1" />
-          <Button variant="ghost" onClick={() => navigate('/settings/model')}>
-            <ChevronLeft />
-            取消
-          </Button>
-          <Button disabled={!provider || saving} onClick={() => void handleSave()}>
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          <div className="flex items-center gap-2 border-t pt-4">
+            <Button
+              variant="outline"
+              disabled={!provider || !testModelId || testing}
+              onClick={() => void handleTest()}
+            >
+              {testing ? '测试中…' : '测试连接'}
+            </Button>
+            <div className="flex-1" />
+            <Button variant="ghost" onClick={() => navigate('/settings/model')}>
+              <ChevronLeft />
+              取消
+            </Button>
+            <Button disabled={!provider || saving} onClick={() => void handleSave()}>
+              {saving ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

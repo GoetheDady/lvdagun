@@ -4,10 +4,6 @@
   "workspaces": {
     "": {
       "name": "lvdagun",
-      "dependencies": {
-        "@earendil-works/pi-agent-core": "0.84.3",
-        "@earendil-works/pi-coding-agent": "0.84.3",
-      },
       "devDependencies": {
         "@commitlint/cli": "^21.2.1",
         "@commitlint/config-conventional": "^21.2.0",
@@ -84,7 +80,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@earendil-works/pi-agent-core": "0.84.3",
-        "@earendil-works/pi-coding-agent": "0.84.3",
         "zod": "^4.4.3",
       },
     },

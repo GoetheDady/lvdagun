@@ -6,6 +6,7 @@ import type { AvailableModel, ModelReference } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/utils/class-names';
 
 interface ModelSelectorProps {
   /** 当前会话模型 */
@@ -16,6 +17,10 @@ interface ModelSelectorProps {
   disabled: boolean;
   /** 模型切换请求是否仍在进行 */
   loading: boolean;
+  /** 触发器按钮的自定义类名;与默认类名合并,冲突时后者覆盖 */
+  className?: string;
+  /** 自定义触发器内容;缺省为模型名 + 切换箭头 */
+  triggerChildren?: React.ReactNode;
   /** @param model - 用户选择的跨 Provider 模型引用 */
   onSelect(model: ModelReference): void;
 }
@@ -64,14 +69,18 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
           type="button"
           variant="ghost"
           size="sm"
-          className="min-w-0 max-w-48 gap-1.5 px-2 text-muted-foreground"
+          className={cn('min-w-0 max-w-48 gap-1.5 px-2 text-muted-foreground', props.className)}
           disabled={props.disabled}
           aria-label={`模型 ${props.value.name}`}
           title={`${props.value.providerName} / ${props.value.name}`}
         >
           {props.loading ? <Loader2 className="animate-spin" /> : null}
-          <span className="truncate text-foreground">{props.value.name}</span>
-          <ChevronsUpDown className="size-3.5" />
+          {props.triggerChildren ?? (
+            <>
+              <span className="truncate text-foreground">{props.value.name}</span>
+              <ChevronsUpDown className="size-3.5" />
+            </>
+          )}
         </Button>
       </Popover.Trigger>
       <Popover.Portal>

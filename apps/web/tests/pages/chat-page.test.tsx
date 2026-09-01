@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +23,6 @@ vi.mock('@/services/api-client', () => ({
     steerPendingMessage: vi.fn(),
     removePendingMessage: vi.fn(),
     takePendingMessages: vi.fn(),
-    discardPendingMessages: vi.fn(),
     setThinkingLevel: vi.fn(),
     setSessionModel: vi.fn(),
   },
@@ -180,6 +179,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn() },
@@ -203,6 +203,28 @@ beforeEach(() => {
 });
 
 describe('ChatPage 产品历史投影', () => {
+  it('加载会话时发送按钮显示加载状态而不是发送图标', async () => {
+    let resolveHistory!: (value: ProductSessionHistory) => void;
+    vi.mocked(api.getMessages).mockReturnValue(
+      new Promise<ProductSessionHistory>((resolve) => {
+        resolveHistory = resolve;
+      })
+    );
+    renderPage();
+
+    const button = screen.getByRole('button', { name: '发送' });
+    expect(button.querySelector('.lucide-loader-circle')).toBeInTheDocument();
+    expect(button.querySelector('.lucide-send')).not.toBeInTheDocument();
+
+    await act(async () => resolveHistory(history()));
+  });
+
+  it('会话就绪后自动聚焦输入框，与草稿页停靠态衔接', async () => {
+    renderPage();
+
+    await waitFor(() => expect(screen.getByPlaceholderText('输入消息')).toHaveFocus());
+  });
+
   it('提交后在运行记录到达前立即显示运行标记', async () => {
     const user = userEvent.setup();
     let resolvePrompt!: () => void;
@@ -214,7 +236,9 @@ describe('ChatPage 产品历史投影', () => {
     );
     renderPage();
 
-    const textarea = await screen.findByPlaceholderText('输入消息');
+    // 等快照送达（问候语 = loading=false 且可交互），避免负载下在按钮 disabled 时点击被静默吞掉
+    await screen.findByText('有什么事，吩咐吧。');
+    const textarea = screen.getByPlaceholderText('输入消息');
     await user.type(textarea, '帮我检查');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
@@ -292,7 +316,7 @@ describe('ChatPage 产品历史投影', () => {
     const textarea = screen.getByRole('textbox', { name: '编辑用户消息' });
     await user.clear(textarea);
     await user.type(textarea, '修改后的问题');
-    await user.click(screen.getByTitle('发送编辑后的消息'));
+    await user.click(screen.getByRole('button', { name: '重发' }));
     expect(api.editAndResend).toHaveBeenCalledWith('session-a', 'user-a', '修改后的问题');
   });
 
@@ -386,5 +410,76 @@ describe('ChatPage 产品历史投影', () => {
     expect((await screen.findByText('正在更新执行计划')).closest('[role="status"]')).not.toBeNull();
     expect(screen.queryByText('todo', { selector: 'summary span' })).not.toBeInTheDocument();
     expect(screen.queryByText('核对接口')).not.toBeInTheDocument();
+  });
+});
+
+describe('ChatPage 窄屏会话抽屉', () => {
+  /** 模拟窗口窄于 768px */
+  function mockNarrow(): void {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: false,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }) as MediaQueryList
+    );
+  }
+
+  it('窄屏下侧栏收起为抽屉，唤出后选择会话自动关闭', async () => {
+    const user = userEvent.setup();
+    mockNarrow();
+    renderPage();
+
+    expect(screen.queryByRole('dialog', { name: '会话列表' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '打开会话列表' }));
+
+    const drawer = screen.getByRole('dialog', { name: '会话列表' });
+    await user.click(within(drawer).getByRole('button', { name: '打开会话：检查' }));
+    expect(screen.queryByRole('dialog', { name: '会话列表' })).not.toBeInTheDocument();
+  });
+
+  it('窄屏下 Escape 关闭抽屉', async () => {
+    const user = userEvent.setup();
+    mockNarrow();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: '打开会话列表' }));
+    expect(screen.getByRole('dialog', { name: '会话列表' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: '会话列表' })).not.toBeInTheDocument();
+  });
+
+  it('宽屏下不渲染抽屉唤出按钮', async () => {
+    renderPage();
+    await screen.findByText('接着上面已经生成的继续生成');
+    expect(screen.queryByRole('button', { name: '打开会话列表' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开会话：检查' })).toBeInTheDocument();
+  });
+});
+
+describe('ChatPage 分叉二次确认', () => {
+  it('点击分叉先弹确认，确认后才调用分叉接口', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTitle('分叉为新会话'));
+
+    expect(api.forkSession).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole('button', { name: '分叉' }));
+    await waitFor(() => expect(api.forkSession).toHaveBeenCalledWith('session-a', 'run-a'));
+  });
+
+  it('取消确认对话框则不调用分叉接口', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTitle('分叉为新会话'));
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(api.forkSession).not.toHaveBeenCalled();
   });
 });

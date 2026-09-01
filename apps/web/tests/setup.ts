@@ -8,6 +8,21 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom 未实现 matchMedia,响应式断点依赖它;默认匹配宽屏,保持既有测试行为不变
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList) as typeof window.matchMedia;
+}
+
 // jsdom 未实现 ResizeObserver,可调整面板挂载时依赖浏览器提供该接口
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class ResizeObserver {

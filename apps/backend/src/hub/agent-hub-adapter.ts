@@ -5,6 +5,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type {
   AgentSessionState,
   AgentStreamEvent,
+  AvailableModel,
   ModelReference,
   ModelSettings,
   ModelInfo,
@@ -20,19 +21,29 @@ export interface ExecutionMessage {
   message: AgentMessage;
 }
 
+/** 随会话广播给客户端的产品状态事件类型：只更新界面状态，不进入产品执行历史。 */
+export type ProductStateEventType =
+  | 'session_model_changed'
+  | 'pending_messages_changed'
+  | 'session_info_changed'
+  | 'thinking_level_changed';
+
 /** 单会话适配器发出的后端事件，不跨越 JSON-RPC 边界。 */
 export type AgentSessionAdapterEvent =
   | AgentSessionEvent
-  | Extract<
-      AgentStreamEvent,
-      {
-        type:
-          | 'session_model_changed'
-          | 'pending_messages_changed'
-          | 'session_info_changed'
-          | 'thinking_level_changed';
-      }
-    >;
+  | Extract<AgentStreamEvent, { type: ProductStateEventType }>;
+
+/** @param event - 适配器事件 @returns 是否为随会话广播的产品状态事件 */
+export function isProductStateEvent(
+  event: AgentSessionAdapterEvent
+): event is Extract<AgentSessionAdapterEvent, { type: ProductStateEventType }> {
+  return (
+    event.type === 'session_model_changed' ||
+    event.type === 'pending_messages_changed' ||
+    event.type === 'session_info_changed' ||
+    event.type === 'thinking_level_changed'
+  );
+}
 
 /** Agent 正在运行，当前操作不能与之并发 */
 export class AgentBusyError extends Error {
@@ -148,11 +159,11 @@ export interface AgentSessionAdapter {
   /**
    * 编辑当前分支最后一条用户消息并重新开始 Agent 运行。
    *
-   * @param entryId - 最后一条用户消息的 Pi 条目标识
+   * @param expectedText - 被编辑消息的原文，用于确认编辑目标就是最后一条用户消息
    * @param text - 修改后的非空文本
-   * @returns 提示被接受后的当前分支历史
+   * @returns 无返回值
    */
-  editAndResend(entryId: string, text: string): Promise<void>;
+  editAndResend(expectedText: string, text: string): Promise<void>;
 
   /**
    * 读取当前 Agent 运行与思考等级状态。
@@ -238,6 +249,14 @@ export interface AgentHubAdapter {
   listModels(providerId: string): Promise<ModelInfo[]>;
 
   /**
+   * 列出当前凭据下实际可用的模型。
+   *
+   * @param settings - 模型服务配置
+   * @returns 可用模型列表
+   */
+  listAvailableModels(settings: ModelSettings): Promise<AvailableModel[]>;
+
+  /**
    * 测试 Provider 凭证和网络链路;成功时由 Pi 持久化凭证,失败时不修改凭据。
    *
    * @param providerId - Provider id
@@ -258,10 +277,11 @@ export interface AgentHubAdapter {
    * 按模型服务配置创建会话。
    *
    * @param settings - 模型服务配置
+   * @param requestedModel - 可选的初始会话模型；不可用时回退到默认模型
    * @returns 就绪的 Hub 会话
    * @throws 模型不存在或初始化失败
    */
-  createSession(settings: ModelSettings): Promise<AgentSessionAdapter>;
+  createSession(settings: ModelSettings, requestedModel?: ModelReference): Promise<AgentSessionAdapter>;
 
   /**
    * 按不透明标识打开一个已有持久化会话。

@@ -9,10 +9,12 @@ import type {
   ProductToolDraft,
 } from '@lvdagun/protocol';
 
-import type {
-  AgentSessionAdapter,
-  AgentSessionAdapterEvent,
-  ExecutionMessage,
+import {
+  isProductStateEvent,
+  type AgentSessionAdapter,
+  type AgentSessionAdapterEvent,
+  type ExecutionMessage,
+  type ProductStateEventType,
 } from '../hub/agent-hub-adapter';
 import {
   mapPiAssistantSegment,
@@ -450,24 +452,6 @@ export class ProductHistoryRecorder {
       itemIndex += 1;
     }
   }
-}
-
-type ProductStateEventType =
-  | 'session_model_changed'
-  | 'pending_messages_changed'
-  | 'session_info_changed'
-  | 'thinking_level_changed';
-
-/** @param event - 适配器事件 @returns 是否为非执行产品状态 */
-function isProductStateEvent(
-  event: AgentSessionAdapterEvent
-): event is Extract<AgentSessionAdapterEvent, { type: ProductStateEventType }> {
-  return (
-    event.type === 'session_model_changed' ||
-    event.type === 'pending_messages_changed' ||
-    event.type === 'session_info_changed' ||
-    event.type === 'thinking_level_changed'
-  );
 }
 
 /** @param segment - 最终可见片段 @returns Agent 运行终态 */

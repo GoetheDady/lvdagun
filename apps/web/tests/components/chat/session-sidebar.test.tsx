@@ -19,7 +19,6 @@ describe('SessionSidebar', () => {
         ]}
         activeSessionId="session-a"
         loading={false}
-        creating={false}
         mutatingSessionId={null}
         error={null}
         hubConnectionStatus="connected"
@@ -46,7 +45,6 @@ describe('SessionSidebar', () => {
         sessions={[]}
         activeSessionId="session-a"
         loading={false}
-        creating={false}
         mutatingSessionId={null}
         error={null}
         hubConnectionStatus="failed"

@@ -49,7 +49,7 @@ export function SearchableList(props: SearchableListProps): React.JSX.Element {
               className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${
                 props.selectedId === item.id
                   ? 'border-primary bg-primary/5 text-foreground'
-                  : 'border-border hover:bg-muted'
+                  : 'border-transparent hover:bg-muted'
               }`}
             >
               <span>{item.name}</span>

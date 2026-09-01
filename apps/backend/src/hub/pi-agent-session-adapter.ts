@@ -4,6 +4,8 @@ import type {
   AgentSessionRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { sessionEntryToContextMessages } from '@earendil-works/pi-coding-agent';
+
+import { readPiUserText } from '../history/pi-history-event-mapper';
 import type {
   ActiveCompaction,
   AgentSessionState,
@@ -142,23 +144,29 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
   /**
    * 在当前分支最后一条用户消息之前建立新分支并发送修改后的文本。
    *
-   * @param entryId - 当前分支最后一条用户消息的条目标识
+   * 目标校验用文本而非 pi_entry 引用：分叉会话重启后 toolCallId 映射丢失，
+   * 引用可能缺失，但产品消息原文与 Pi 分支末尾的用户消息始终一致。
+   *
+   * @param expectedText - 被编辑消息的原文，必须与当前分支最后一条用户消息一致
    * @param text - 修改后的文本
-   * @returns 提示被接受后的当前分支历史
+   * @returns 无返回值
    */
-  async editAndResend(entryId: string, text: string): Promise<void> {
+  async editAndResend(expectedText: string, text: string): Promise<void> {
     this.assertIdle();
     const session = this.runtime.session;
     const branch = session.sessionManager.getBranch();
     const targetEntry = [...branch]
       .reverse()
       .find((entry) => entry.type === 'message' && entry.message.role === 'user');
-    if (targetEntry?.id !== entryId || targetEntry.type !== 'message') {
+    if (
+      targetEntry?.type !== 'message' ||
+      readPiUserText(targetEntry.message) !== expectedText
+    ) {
       throw new SessionEntryConflictError('只能编辑当前分支最后一条用户消息');
     }
 
     const oldLeafId = session.sessionManager.getLeafId();
-    if (oldLeafId === entryId) {
+    if (oldLeafId === targetEntry.id) {
       if (targetEntry.parentId === null) {
         session.sessionManager.resetLeaf();
       } else {
@@ -166,7 +174,7 @@ export class PiAgentSessionAdapter implements AgentSessionAdapter {
       }
       session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
     } else {
-      await session.navigateTree(entryId);
+      await session.navigateTree(targetEntry.id);
     }
     try {
       await this.prompt(text);

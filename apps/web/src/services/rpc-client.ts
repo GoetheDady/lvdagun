@@ -146,7 +146,6 @@ export class RpcConnection {
 
   /** 订阅会话列表的权威快照和变化通知。 */
   async subscribeSessionList(subscription: ListSubscription): Promise<() => void> {
-    const alreadySubscribed = this.listSubscriptions.size > 0;
     this.listSubscriptions.add(subscription);
     const unsubscribe = (): void => {
       this.listSubscriptions.delete(subscription);
@@ -154,8 +153,9 @@ export class RpcConnection {
         void this.request('session/unsubscribe', { scope: 'list' }).catch(() => undefined);
     };
     try {
-      if (!alreadySubscribed)
-        subscription.onList(await this.request<SessionSummary[]>('session/list'));
+      // 每个订阅者都拉一次权威快照：StrictMode 双挂载时首个订阅会留在集合内，
+      // 若按“已订阅”跳过，第二个订阅者将永远等不到初始列表。
+      subscription.onList(await this.request<SessionSummary[]>('session/list'));
     } catch (error) {
       if (this.status === 'failed') {
         subscription.onError?.(toError(error));
@@ -251,11 +251,7 @@ export class RpcConnection {
               jsonrpc: '2.0',
               id,
               method: 'initialize',
-              params: {
-                protocolVersion: RPC_PROTOCOL_VERSION,
-                clientInfo: { name: 'lvdagun-web', version: '0.1.0' },
-                capabilities: {},
-              },
+              params: { protocolVersion: RPC_PROTOCOL_VERSION },
             })
           );
         } catch (error) {

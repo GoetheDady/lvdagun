@@ -2,6 +2,7 @@
 import {
   type AbortSessionResult,
   type AgentSessionState,
+  type AvailableModel,
   type CreateSessionResult,
   type EditResendResult,
   type ForkSessionResult,
@@ -32,9 +33,13 @@ export const api = {
   listModels: (provider: string): Promise<ModelInfo[]> =>
     getRpcConnection().request('catalog/listModels', { provider }),
 
+  listAvailableModels: (): Promise<AvailableModel[]> =>
+    getRpcConnection().request('catalog/listAvailableModels'),
+
   listSessions: (): Promise<SessionSummary[]> => getRpcConnection().request('session/list'),
 
-  createSession: (): Promise<CreateSessionResult> => getRpcConnection().request('session/create'),
+  createSession: (params?: { model?: ModelReference }): Promise<CreateSessionResult> =>
+    getRpcConnection().request('session/create', params),
 
   archiveSession: (sessionId: string): Promise<void> =>
     getRpcConnection().request('session/archive', { sessionId }),
@@ -73,9 +78,6 @@ export const api = {
 
   takePendingMessages: (sessionId: string): Promise<TakePendingMessagesResult> =>
     getRpcConnection().request('session/pending/take', { sessionId }),
-
-  discardPendingMessages: (sessionId: string): Promise<void> =>
-    getRpcConnection().request('session/pending/discard', { sessionId }),
 
   setThinkingLevel: (sessionId: string, level: ThinkingLevel): Promise<AgentSessionState> =>
     getRpcConnection().request('session/thinkingLevel', { sessionId, level }),

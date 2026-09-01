@@ -69,11 +69,8 @@ async function openConnection(connection: RpcConnection): Promise<MockWebSocket>
   socket.receive({
     jsonrpc: '2.0',
     id: initialize.id,
-    result: {
-      protocolVersion: 1,
-      serverInfo: { name: 'lvdagun', version: '0.1.0' },
-      capabilities: {},
-    },
+    result: { protocolVersion: 1 },
+
   });
   await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
   const request = JSON.parse(socket.sent[1]!) as { id: number };
@@ -97,11 +94,8 @@ describe('RpcConnection', () => {
     socket.receive({
       jsonrpc: '2.0',
       id: initialize.id,
-      result: {
-        protocolVersion: 1,
-        serverInfo: { name: 'lvdagun', version: '0.1.0' },
-        capabilities: {},
-      },
+      result: { protocolVersion: 1 },
+
     });
     await vi.waitFor(() => expect(socket.sent).toHaveLength(2));
     const listProviders = JSON.parse(socket.sent[1]!) as { id: number };
@@ -146,11 +140,8 @@ describe('RpcConnection', () => {
     socket.receive({
       jsonrpc: '2.0',
       id: initialize.id,
-      result: {
-        protocolVersion: 1,
-        serverInfo: { name: 'lvdagun', version: '0.1.0' },
-        capabilities: {},
-      },
+      result: { protocolVersion: 1 },
+
     });
     await flushMicrotasks();
     expect(connection.getStatus()).toBe('connected');
@@ -172,6 +163,28 @@ describe('RpcConnection', () => {
 
     await expect(first).resolves.toEqual(firstResult);
     await expect(second).resolves.toEqual(secondResult);
+  });
+
+  it('每个列表订阅者都拉取权威快照，双挂载不丢初始列表', async () => {
+    const connection = new RpcConnection();
+    const socket = await openConnection(connection);
+
+    // 模拟 StrictMode 双挂载：第一个订阅尚未结束时第二个已加入
+    const onListA = vi.fn();
+    const onListB = vi.fn();
+    const pendingA = connection.subscribeSessionList({ onList: onListA });
+    const pendingB = connection.subscribeSessionList({ onList: onListB });
+
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(4));
+    const requestA = JSON.parse(socket.sent[2]!) as { id: number };
+    const requestB = JSON.parse(socket.sent[3]!) as { id: number };
+    socket.receive({ jsonrpc: '2.0', id: requestA.id, result: [] });
+    socket.receive({ jsonrpc: '2.0', id: requestB.id, result: [] });
+
+    await pendingA;
+    await pendingB;
+    expect(onListA).toHaveBeenCalledTimes(1);
+    expect(onListB).toHaveBeenCalledTimes(1);
   });
 
   it('拒绝不符合共享协议的服务端通知', async () => {

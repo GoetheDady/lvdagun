@@ -50,14 +50,13 @@ describe('JSON-RPC 客户端', () => {
     request.mockResolvedValue({});
     await api.steerPendingMessage('session-a', 'pending/a');
     await api.removePendingMessage('session-a', 'pending/a');
-    await api.discardPendingMessages('session-a');
     await api.setThinkingLevel('session-a', 'high');
     await api.setSessionModel('session-a', { provider: 'openai', id: 'gpt-a' });
     expect(request).toHaveBeenNthCalledWith(1, 'session/pending/steer', {
       sessionId: 'session-a',
       messageId: 'pending/a',
     });
-    expect(request).toHaveBeenNthCalledWith(5, 'session/model', {
+    expect(request).toHaveBeenNthCalledWith(4, 'session/model', {
       sessionId: 'session-a',
       model: { provider: 'openai', id: 'gpt-a' },
     });

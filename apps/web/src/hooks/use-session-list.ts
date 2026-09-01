@@ -9,11 +9,8 @@ import { getRpcConnection } from '@/services/rpc-client';
 export interface SessionList {
   sessions: SessionSummary[];
   loading: boolean;
-  creating: boolean;
   mutatingSessionId: string | null;
   error: string | null;
-  /** @returns 新会话标识 */
-  createSession(): Promise<string | null>;
   /** @param sessionId - 会话标识 @returns 是否归档成功 */
   archiveSession(sessionId: string): Promise<boolean>;
   /** @param sessionId - 会话标识 @returns 是否删除成功 */
@@ -27,12 +24,11 @@ export interface SessionList {
 /**
  * 订阅持久化会话摘要的权威快照和变化通知。
  *
- * @returns 会话列表状态和创建操作
+ * @returns 会话列表状态和列表操作
  */
 export function useSessionList(): SessionList {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [mutatingSessionId, setMutatingSessionId] = useState<string | null>(null);
   const mutationRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,28 +90,6 @@ export function useSessionList(): SessionList {
       unsubscribe?.();
     };
   }, [refresh]);
-
-  /**
-   * 创建一个持久化会话并刷新列表。
-   *
-   * @returns 新会话标识；创建失败或正在创建时返回 null
-   */
-  const createSession = useCallback(async (): Promise<string | null> => {
-    if (creating) {
-      return null;
-    }
-    setCreating(true);
-    try {
-      const result = await api.createSession();
-      await refresh();
-      return result.sessionId;
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : String(createError));
-      return null;
-    } finally {
-      setCreating(false);
-    }
-  }, [creating, refresh]);
 
   /**
    * 执行会话列表操作并投影成功后的列表状态。
@@ -180,10 +154,8 @@ export function useSessionList(): SessionList {
   return {
     sessions,
     loading,
-    creating,
     mutatingSessionId,
     error,
-    createSession,
     archiveSession,
     deleteSession,
     renameSession,

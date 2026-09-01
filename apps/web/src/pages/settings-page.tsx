@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 import { ArrowLeft, Info, Server } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 
 /** 设置分区导航项 */
 const NAV_ITEMS = [
@@ -57,22 +57,37 @@ function SettingsPage(): React.JSX.Element {
 }
 
 /**
- * 关于分区:静态产品信息与隐私说明。
+ * 关于分区:铺子的招牌——品牌名立在米黄匾额上,下方是产品与隐私说明。
  *
  * @returns 关于面板元素
  */
 export function AboutPanel(): React.JSX.Element {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">关于</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        <p className="font-display text-lg font-bold tracking-wide">驴打滚</p>
-        <p>V0 · 个人 AI 管家</p>
-        <p className="text-muted-foreground">对话数据只存本机,由 lvdagun 命令管理服务。</p>
-      </CardContent>
-    </Card>
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <div className="space-y-1.5">
+        <h1 className="font-display text-2xl font-bold tracking-wide">关于</h1>
+        <p className="text-sm text-muted-foreground">产品信息与隐私说明。</p>
+      </div>
+      <Card>
+        <CardContent className="p-6">
+          {/* 匾额:品牌名是铺子的门面,居中立在米黄匾上,与默认模型的招牌同材质 */}
+          <div className="flex flex-col items-center gap-3 rounded-md border border-border bg-secondary/60 px-6 py-8 text-center">
+            <img
+              alt=""
+              className="size-12 rounded-md"
+              height="48"
+              src="/brand/logo-512.png"
+              width="48"
+            />
+            <p className="font-display text-3xl font-bold tracking-wide">驴打滚</p>
+          </div>
+          <div className="mt-5 space-y-1 text-center text-sm">
+            <p className="font-medium">V0 · 个人 AI 管家</p>
+            <p className="text-muted-foreground">对话数据只存本机,由 lvdagun 命令管理服务。</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

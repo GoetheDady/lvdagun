@@ -69,7 +69,13 @@ async function serve(): Promise<void> {
     const url = `http://${SERVICE_HOST}:${webPort}/`;
     console.log(`驴打滚已启动:${url}`);
     void writeFile(PID_FILE, String(process.pid), { mode: 0o600 });
-    openBrowser(url);
+    // bun --hot 热重载会重跑入口顶层代码；globalThis 跨热重载存活，用它保证
+    // 只在新进程（手动启动）时打开浏览器，编辑文件触发的不重复打开
+    const scope = globalThis as typeof globalThis & { __lvdagunBrowserOpened?: boolean };
+    if (!scope.__lvdagunBrowserOpened) {
+      scope.__lvdagunBrowserOpened = true;
+      openBrowser(url);
+    }
   });
   const closeRpc = attachRpcServer(server, agentHub);
 

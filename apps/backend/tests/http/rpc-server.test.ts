@@ -53,7 +53,7 @@ async function initialize(rpc: ReturnType<typeof openRpc>): Promise<void> {
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
-    params: { protocolVersion: 2, clientInfo: { name: 'test', version: '1' }, capabilities: {} },
+    params: { protocolVersion: 2 },
   });
   await expect(rpc.next()).resolves.toMatchObject({ id: 1, result: { protocolVersion: 2 } });
 }
@@ -106,11 +106,7 @@ describe('JSON-RPC WebSocket', () => {
         jsonrpc: '2.0',
         id: 2,
         method: 'initialize',
-        params: {
-          protocolVersion: 99,
-          clientInfo: { name: 'test', version: '1' },
-          capabilities: {},
-        },
+        params: { protocolVersion: 99 },
       });
       await expect(incompatible.next()).resolves.toMatchObject({ id: 2, error: { code: -32602 } });
       incompatible.socket.close();
@@ -192,7 +188,7 @@ describe('JSON-RPC WebSocket', () => {
         id: 3,
         result: { history: { sessionId: 'session-1' } },
       });
-      expect(sessions[0]!.lastEditedEntryId).toBe('pi-user-a');
+      expect(sessions[0]!.lastEditedText).toBe('原问题');
     } finally {
       rpc.socket.close();
       await close();
@@ -220,6 +216,32 @@ describe('JSON-RPC WebSocket', () => {
           history: { sessionId: 'session-1' },
           state: { executionAvailable: false },
         },
+      });
+    } finally {
+      rpc.socket.close();
+      await close();
+    }
+  });
+
+  it('订阅不存在的会话返回 session_not_found 而不是内部错误', async () => {
+    const { hub } = makeFakeHub();
+    const store = new FileConfigStore(join(dir, 'config.json'));
+    await store.save(validConfig);
+    const { baseUrl, close } = await startServer(hub, store);
+    const rpc = openRpc(baseUrl);
+    try {
+      await initialize(rpc);
+      // 重启后浏览器重连已被生命周期恢复清理的会话：必须映射为领域错误，
+      // 前端靠 session_not_found 显示不可用工作区，而不是内部错误堆栈
+      await send(rpc.socket, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'session/subscribe',
+        params: { sessionId: 'ghost-session' },
+      });
+      await expect(rpc.next()).resolves.toMatchObject({
+        id: 2,
+        error: { data: { code: 'session_not_found' } },
       });
     } finally {
       rpc.socket.close();

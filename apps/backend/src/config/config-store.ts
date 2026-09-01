@@ -13,26 +13,8 @@ import { parseModelSettings } from './model-settings';
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
-/** 配置存取契约 */
-export interface ConfigStore {
-  /**
-   * 读取模型服务配置。
-   *
-   * @returns 模型服务配置；未配置或配置损坏时 providers 为空数组
-   */
-  load(): Promise<ModelSettings>;
-
-  /**
-   * 原子写入模型服务配置。
-   *
-   * @param settings - 要持久化的模型服务配置
-   * @returns 写入完成后解决的 Promise
-   */
-  save(settings: ModelSettings): Promise<void>;
-}
-
-/** 模型服务配置的文件存储实现 */
-export class FileConfigStore implements ConfigStore {
+/** 模型服务配置的文件存储。 */
+export class FileConfigStore {
   private readonly file: string;
 
   /**

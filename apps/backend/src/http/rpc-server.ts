@@ -30,6 +30,7 @@ import {
   SessionNotFoundError,
 } from '../hub/agent-hub-adapter';
 import { NotConfiguredError, type AgentHub } from '../hub/agent-hub';
+import { ProductHistorySessionNotFoundError } from '../history/product-history';
 
 const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
@@ -184,11 +185,7 @@ async function dispatch(
       if (!isObject(p) || p.protocolVersion !== RPC_PROTOCOL_VERSION)
         throw new RpcDispatchError(INVALID_PARAMS, '协议版本不兼容');
       connection.initialized = true;
-      return {
-        protocolVersion: RPC_PROTOCOL_VERSION,
-        serverInfo: { name: 'lvdagun', version: '0.1.0' },
-        capabilities: { sessionSubscriptions: true },
-      };
+      return { protocolVersion: RPC_PROTOCOL_VERSION };
     case 'config/get':
       return agentHub.getConfig();
     case 'config/update':
@@ -204,6 +201,8 @@ async function dispatch(
       return agentHub.listProviders();
     case 'catalog/listModels':
       return agentHub.listModels(stringParam(p, 'provider'));
+    case 'catalog/listAvailableModels':
+      return agentHub.listAvailableModels();
     case 'session/list':
       connection.listSubscribed = true;
       return agentHub.listSessions();
@@ -219,7 +218,9 @@ async function dispatch(
       return null;
     }
     case 'session/create': {
-      const result = { sessionId: await agentHub.createSession() };
+      // 草稿提交首条消息时才创建会话；params 可省略（用默认模型）。
+      const model = (p as { model?: RpcMethodParams['session/create']['model'] } | undefined)?.model;
+      const result = { sessionId: await agentHub.createSession(model) };
       await broadcastList(connections, agentHub);
       return result;
     }
@@ -270,9 +271,6 @@ async function dispatch(
       return null;
     case 'session/pending/take':
       return { texts: await agentHub.takePendingMessages(stringParam(p, 'sessionId')) };
-    case 'session/pending/discard':
-      await agentHub.takePendingMessages(stringParam(p, 'sessionId'));
-      return null;
     case 'session/thinkingLevel': {
       const sessionId = stringParam(p, 'sessionId');
       const level = stringParam(p, 'level') as ThinkingLevel;
@@ -364,7 +362,12 @@ function sendDomainError(socket: WebSocket, id: string | number, error: unknown)
     sendError(socket, id, error.code, error.message);
     return;
   }
-  if (error instanceof SessionNotFoundError) {
+  if (
+    error instanceof SessionNotFoundError ||
+    error instanceof ProductHistorySessionNotFoundError
+  ) {
+    // 产品历史缺失同样按会话不存在处理：浏览器重启后重连已清理的会话属于正常情况，
+    // 前端靠 session_not_found 显示不可用工作区，不能落成内部错误堆栈
     sendError(socket, id, DOMAIN_ERROR, '会话不存在', { code: 'session_not_found' });
     return;
   }

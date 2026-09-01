@@ -30,7 +30,6 @@ vi.mock('@/services/api-client', () => ({
     steerPendingMessage: vi.fn(),
     removePendingMessage: vi.fn(),
     takePendingMessages: vi.fn(),
-    discardPendingMessages: vi.fn(),
     setThinkingLevel: vi.fn(),
     setSessionModel: vi.fn(),
   },

@@ -3,7 +3,7 @@
  *
  * 本模块是本地服务中唯一创建 Pi 运行时和会话的地方。
  */
-import { mkdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -18,6 +18,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import type {
   ModelInfo,
+  ModelReference,
   ProviderInfo,
   TestConnectionResult,
   ThinkingLevel,
@@ -73,27 +74,44 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
     return runtimePromise;
   };
 
-  /**
-   * 使用指定 Pi SessionManager 创建完整会话 Runtime。
-   *
-   * @param settings - 当前模型服务配置
-   * @param piSessionManager - 新建或打开的 Pi 持久化会话管理器
-   * @returns Hub 会话适配器
-   */
-  const createHubSession = async (
-    settings: Parameters<AgentHubAdapter['createSession']>[0],
-    piSessionManager: PiSessionManager
-  ): Promise<AgentSessionAdapter> => {
-    const pendingMessages = createPendingMessageExtension();
-    const todoExtension = await loadTodoExtension();
+  /** 为 Runtime 注入全部已配置 Provider 凭据：任一 Provider 配好后，其名下模型都应可用。 */
+  const injectCredentials = async (
+    settings: Parameters<AgentHubAdapter['createSession']>[0]
+  ): Promise<void> => {
     const runtime = await getRuntime();
-    // 为所有已配置 Provider 注入凭据：任一 Provider 配好后，其名下模型都应可用。
     for (const entry of settings.providers) {
       if (entry.apiKey) {
         await runtime.setRuntimeApiKey(entry.provider, entry.apiKey);
       }
     }
+  };
+
+  /**
+   * 使用指定 Pi SessionManager 创建完整会话 Runtime。
+   *
+   * @param settings - 当前模型服务配置
+   * @param piSessionManager - 新建或打开的 Pi 持久化会话管理器
+   * @param requestedModel - 可选的初始会话模型；不可用时回退到默认模型
+   * @returns Hub 会话适配器
+   */
+  const createHubSession = async (
+    settings: Parameters<AgentHubAdapter['createSession']>[0],
+    piSessionManager: PiSessionManager,
+    requestedModel?: ModelReference
+  ): Promise<AgentSessionAdapter> => {
+    const pendingMessages = createPendingMessageExtension();
+    const todoExtension = await loadTodoExtension();
+    const runtime = await getRuntime();
+    await injectCredentials(settings);
     const availableModels = await runtime.getAvailable();
+
+    // 客户端在草稿态预选的模型不在当前可用列表（如凭据被移除）时回退到默认模型。
+    const requestedAvailable = requestedModel
+      ? availableModels.find(
+          (candidate) =>
+            candidate.provider === requestedModel.provider && candidate.id === requestedModel.id
+        )
+      : undefined;
 
     // 默认模型可能指向已删除或未配置凭据的 Provider，此时回退到第一个可用模型。
     const configuredDefault = settings.defaultModel
@@ -117,11 +135,13 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
             candidate.id === storedReference.modelId
         )
       : undefined;
-    const model = restoredModel ?? defaultModel;
+    const model = requestedAvailable ?? restoredModel ?? defaultModel;
     const modelWarning =
-      storedReference && !restoredModel
-        ? `会话模型 ${storedReference.provider}/${storedReference.modelId} 已不可用,已回退到 ${defaultModel.provider}/${defaultModel.id}`
-        : null;
+      requestedModel && !requestedAvailable
+        ? `指定模型 ${requestedModel.provider}/${requestedModel.id} 已不可用,已回退到 ${defaultModel.provider}/${defaultModel.id}`
+        : storedReference && !restoredModel
+          ? `会话模型 ${storedReference.provider}/${storedReference.modelId} 已不可用,已回退到 ${defaultModel.provider}/${defaultModel.id}`
+          : null;
 
     const settingsManager = SettingsManager.create(piSessionManager.getCwd(), dataDir, {
       projectTrusted: true,
@@ -176,27 +196,6 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
     });
 
     return new PiAgentSessionAdapter(agentRuntime, pendingMessages, modelWarning);
-  };
-
-  /**
-   * 创建立即可被 Pi 列出的空会话。
-   *
-   * Pi 默认等到第一条 assistant 消息才创建 JSONL；产品中的“新对话”在点击后就已经是
-   * 持久会话，因此先写入 Pi 生成的标准 header，再重新打开以同步其内部持久化状态。
-   *
-   * @returns 已持久化的 Pi 会话管理器
-   */
-  const createPersistedSessionManager = async (): Promise<PiSessionManager> => {
-    const manager = PiSessionManager.create(cwd, sessionDir);
-    const sessionFile = manager.getSessionFile();
-    if (!sessionFile) {
-      throw new Error('Pi 未生成会话文件路径');
-    }
-    await writeFile(sessionFile, `${JSON.stringify(manager.getHeader())}\n`, {
-      encoding: 'utf8',
-      flag: 'wx',
-    });
-    return PiSessionManager.open(sessionFile, sessionDir);
   };
 
   /**
@@ -304,8 +303,22 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
         .sort((left, right) => right.updatedAt - left.updatedAt);
     },
 
-    async createSession(config) {
-      return createHubSession(config, await createPersistedSessionManager());
+    async createSession(config, requestedModel) {
+      // 懒持久化：Pi 默认等到首条消息才写 JSONL，新会话由首条用户提示激活，
+      // 不预写 header，避免“点击后未发消息”的空会话落盘。
+      return createHubSession(config, PiSessionManager.create(cwd, sessionDir), requestedModel);
+    },
+
+    async listAvailableModels(settings) {
+      const runtime = await getRuntime();
+      await injectCredentials(settings);
+      const models = await runtime.getAvailable();
+      return models.map((model) => ({
+        provider: model.provider,
+        providerName: runtime.getProvider(model.provider)?.name ?? model.provider,
+        id: model.id,
+        name: model.name,
+      }));
     },
 
     async openSession(config, sessionId) {

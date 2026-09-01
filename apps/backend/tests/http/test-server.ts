@@ -43,7 +43,7 @@ export class FakeSession implements AgentSessionAdapter {
   readonly messages: ExecutionMessage[] = [];
   readonly listeners = new Set<(event: AgentSessionAdapterEvent) => void>();
   sessionName: string | null = null;
-  lastEditedEntryId: string | null = null;
+  lastEditedText: string | null = null;
   running = false;
 
   /** @param id - Pi 会话标识 */
@@ -80,9 +80,9 @@ export class FakeSession implements AgentSessionAdapter {
   getExecutionHistory(): ExecutionMessage[] {
     return structuredClone(this.messages);
   }
-  /** @param entryId - Pi entry @param text - 新文本 @returns 无返回值 */
-  async editAndResend(entryId: string, text: string): Promise<void> {
-    this.lastEditedEntryId = entryId;
+  /** @param expectedText - 被编辑消息原文 @param text - 新文本 @returns 无返回值 */
+  async editAndResend(expectedText: string, text: string): Promise<void> {
+    this.lastEditedText = expectedText;
     await this.prompt(text);
   }
   /** @returns 会话状态 */
@@ -140,6 +140,7 @@ export function makeFakeHub(): { hub: AgentHubAdapter; sessions: FakeSession[] }
     clearLegacySessions: vi.fn(async () => {}),
     listProviders: vi.fn(async () => [{ id: 'anthropic', name: 'Anthropic' }]),
     listModels: vi.fn(async () => [{ id: 'claude-a', name: 'Claude A' }]),
+    listAvailableModels: vi.fn(async () => []),
     testConnection: vi.fn(async () => ({ ok: true as const })),
     listSessions: vi.fn(async () => []),
     createSession: vi.fn(async () => {

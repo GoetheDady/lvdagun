@@ -28,8 +28,6 @@ export interface ChatSession {
   removePendingMessage(messageId: string): Promise<void>;
   /** @returns 按排队顺序取回的全部文本 */
   takePendingMessages(): Promise<string[]>;
-  /** @returns 丢弃全部待处理消息后的 Promise */
-  discardPendingMessages(): Promise<void>;
   /** @param level - 当前模型支持的思考等级 @returns 持久化完成后的 Promise */
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
   /** @param model - 跨 Provider 模型引用 @returns 持久化完成后的 Promise */
@@ -47,15 +45,12 @@ export function useChatSession(sessionId: string): ChatSession {
 
   useEffect(() => connectSessionRecovery(sessionId, dispatch), [sessionId]);
 
+  // 公共操作闸：会话已与 Hub 对齐且 Pi 执行历史可用；各回调再叠加自己的附加条件。
+  const canAct = state.synchronized && state.session?.executionAvailable !== false;
+
   const send = useCallback(
     async (text: string): Promise<boolean> => {
-      if (
-        !state.synchronized ||
-        state.session?.executionAvailable === false ||
-        state.sending ||
-        state.settingModel ||
-        state.settingThinkingLevel
-      ) {
+      if (!canAct || state.sending || state.settingModel || state.settingThinkingLevel) {
         return false;
       }
       dispatch({ type: 'send_started' });
@@ -63,28 +58,18 @@ export function useChatSession(sessionId: string): ChatSession {
         await api.prompt(sessionId, text);
         dispatch({ type: 'send_finished' });
         return true;
-      } catch (error) {
-        dispatch(
-          operationFailedAction(
-            getErrorStatus(error) === null ? new Error('发送结果未知，请检查会话后手动发送') : error
-          )
-        );
+      } catch {
+        // 保留既有行为：发送失败统一按“结果未知”提示，权威状态随后由会话事件流校准。
+        dispatch(operationFailedAction(new Error('发送结果未知，请检查会话后手动发送')));
         return false;
       }
     },
-    [
-      sessionId,
-      state.sending,
-      state.session?.executionAvailable,
-      state.settingModel,
-      state.settingThinkingLevel,
-      state.synchronized,
-    ]
+    [sessionId, canAct, state.sending, state.settingModel, state.settingThinkingLevel]
   );
 
   const forkSession = useCallback(
     async (runId: string): Promise<string | null> => {
-      if (!state.synchronized || state.session?.executionAvailable === false) return null;
+      if (!canAct) return null;
       try {
         return (await api.forkSession(sessionId, runId)).sessionId;
       } catch (error) {
@@ -92,12 +77,12 @@ export function useChatSession(sessionId: string): ChatSession {
         return null;
       }
     },
-    [sessionId, state.session?.executionAvailable, state.synchronized]
+    [sessionId, canAct]
   );
 
   const editAndResend = useCallback(
     async (itemId: string, text: string): Promise<boolean> => {
-      if (!state.synchronized || state.session?.executionAvailable === false) return false;
+      if (!canAct) return false;
       try {
         const result = await api.editAndResend(sessionId, itemId, text);
         dispatch({ type: 'history_loaded', history: result.history });
@@ -107,7 +92,7 @@ export function useChatSession(sessionId: string): ChatSession {
         return false;
       }
     },
-    [sessionId, state.session?.executionAvailable, state.synchronized]
+    [sessionId, canAct]
   );
 
   const abort = useCallback(async (): Promise<string[]> => {
@@ -125,52 +110,42 @@ export function useChatSession(sessionId: string): ChatSession {
 
   const steerPendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
-      if (!state.synchronized || state.session?.executionAvailable === false) return;
+      if (!canAct) return;
       try {
         await api.steerPendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId, state.session?.executionAvailable, state.synchronized]
+    [sessionId, canAct]
   );
 
   const removePendingMessage = useCallback(
     async (messageId: string): Promise<void> => {
-      if (!state.synchronized || state.session?.executionAvailable === false) return;
+      if (!canAct) return;
       try {
         await api.removePendingMessage(sessionId, messageId);
       } catch (error) {
         dispatch(operationFailedAction(error));
       }
     },
-    [sessionId, state.session?.executionAvailable, state.synchronized]
+    [sessionId, canAct]
   );
 
   const takePendingMessages = useCallback(async (): Promise<string[]> => {
-    if (!state.synchronized || state.session?.executionAvailable === false) return [];
+    if (!canAct) return [];
     try {
       return (await api.takePendingMessages(sessionId)).texts;
     } catch (error) {
       dispatch(operationFailedAction(error));
       return [];
     }
-  }, [sessionId, state.session?.executionAvailable, state.synchronized]);
-
-  const discardPendingMessages = useCallback(async (): Promise<void> => {
-    if (!state.synchronized || state.session?.executionAvailable === false) return;
-    try {
-      await api.discardPendingMessages(sessionId);
-    } catch (error) {
-      dispatch(operationFailedAction(error));
-    }
-  }, [sessionId, state.session?.executionAvailable, state.synchronized]);
+  }, [sessionId, canAct]);
 
   const setThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
       if (
-        !state.synchronized ||
-        state.session?.executionAvailable === false ||
+        !canAct ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||
@@ -188,20 +163,18 @@ export function useChatSession(sessionId: string): ChatSession {
     },
     [
       sessionId,
+      canAct,
       state.isRunning,
       state.session?.thinkingLevel,
-      state.session?.executionAvailable,
       state.settingModel,
       state.settingThinkingLevel,
-      state.synchronized,
     ]
   );
 
   const setModel = useCallback(
     async (model: ModelReference): Promise<void> => {
       if (
-        !state.synchronized ||
-        state.session?.executionAvailable === false ||
+        !canAct ||
         state.isRunning ||
         state.settingModel ||
         state.settingThinkingLevel ||
@@ -219,11 +192,11 @@ export function useChatSession(sessionId: string): ChatSession {
     },
     [
       sessionId,
+      canAct,
       state.isRunning,
       state.session,
       state.settingModel,
       state.settingThinkingLevel,
-      state.synchronized,
     ]
   );
 
@@ -236,14 +209,7 @@ export function useChatSession(sessionId: string): ChatSession {
     steerPendingMessage,
     removePendingMessage,
     takePendingMessages,
-    discardPendingMessages,
     setThinkingLevel,
     setModel,
   };
-}
-
-/** @param error - 未知请求错误 @returns HTTP 状态码；普通错误返回 null */
-function getErrorStatus(error: unknown): number | null {
-  if (typeof error !== 'object' || error === null || !('status' in error)) return null;
-  return typeof error.status === 'number' ? error.status : null;
 }

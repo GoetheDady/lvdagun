@@ -5,6 +5,7 @@ import {
   createForkSessionTitle,
   type AgentSessionState,
   type AgentStreamEvent,
+  type AvailableModel,
   type ModelSettings,
   type ModelInfo,
   type ModelReference,
@@ -17,13 +18,13 @@ import {
 } from '@lvdagun/protocol';
 import { randomUUID } from 'node:crypto';
 
-import type { ConfigStore } from '../config/config-store';
+import type { FileConfigStore } from '../config/config-store';
 import { ProductHistory } from '../history/product-history';
 import { ProductHistoryRecorder } from '../history/product-history-recorder';
 import {
   AgentBusyError,
   SessionNotFoundError,
-  type AgentSessionAdapterEvent,
+  isProductStateEvent,
   type AgentHubAdapter,
   type AgentSessionAdapter,
 } from './agent-hub-adapter';
@@ -66,14 +67,17 @@ export interface AgentHub {
   /** @param providerId - Provider 标识 @returns 该 Provider 的模型列表 */
   listModels(providerId: string): Promise<ModelInfo[]>;
 
+  /** @returns 当前凭据下实际可用的模型列表 */
+  listAvailableModels(): Promise<AvailableModel[]>;
+
   /** @param providerId - Provider 标识 @param apiKey - 待验证凭据 @param modelId - 待测试的模型 @returns 连接结果 */
   testConnection(providerId: string, apiKey: string, modelId: string): Promise<TestConnectionResult>;
 
   /** @returns 按最后更新时间倒序排列的全部会话 */
   listSessions(): Promise<SessionSummary[]>;
 
-  /** @returns 新建持久化会话的不透明标识 */
-  createSession(): Promise<string>;
+  /** @param model - 可选的初始会话模型；不可用时回退到默认模型 @returns 新建持久化会话的不透明标识 */
+  createSession(model?: ModelReference): Promise<string>;
 
   /** @param sourceSessionId - 源会话 @param runId - 助手回复运行 @returns 派生会话标识 */
   forkSession(sourceSessionId: string, runId: string): Promise<string>;
@@ -169,11 +173,12 @@ export interface AgentHub {
  *
  * @param hubAdapter - Pi 持久化和 Runtime 能力适配器
  * @param configStore - 模型配置存取
+ * @param history - 产品会话历史聚合
  * @returns 会话管理操作集
  */
 export function createAgentHub(
   hubAdapter: AgentHubAdapter,
-  configStore: ConfigStore,
+  configStore: FileConfigStore,
   history: ProductHistory
 ): AgentHub {
   const records = new Map<string, Promise<SessionRecord>>();
@@ -259,7 +264,7 @@ export function createAgentHub(
           return;
         }
       }
-      if (!isClientStateEvent(event)) return;
+      if (!isProductStateEvent(event)) return;
       for (const listener of listeners) {
         listener(event);
       }
@@ -383,6 +388,7 @@ export function createAgentHub(
     getConfig: () => configStore.load(),
     listProviders: () => hubAdapter.listProviders(),
     listModels: (providerId) => hubAdapter.listModels(providerId),
+    listAvailableModels: async () => hubAdapter.listAvailableModels(await loadConfig()),
     testConnection: (providerId, apiKey, modelId) => hubAdapter.testConnection(providerId, apiKey, modelId),
 
     async listSessions(): Promise<SessionSummary[]> {
@@ -409,12 +415,12 @@ export function createAgentHub(
       return summaries.sort((left, right) => right.updatedAt - left.updatedAt);
     },
 
-    async createSession(): Promise<string> {
+    async createSession(model?: ModelReference): Promise<string> {
       if (configurationChanging || disposed) throw new AgentBusyError();
       const sessionId = randomUUID();
       history.beginCreate(sessionId);
       try {
-        const session = await hubAdapter.createSession(await loadConfig());
+        const session = await hubAdapter.createSession(await loadConfig(), model);
         history.completeCreate(sessionId, session.id);
         const record = register(sessionId, session);
         records.set(sessionId, Promise.resolve(record));
@@ -542,7 +548,7 @@ export function createAgentHub(
       }
       if (record.session.getState().isRunning) throw new AgentBusyError();
       const edit = history.beginEditResend(sessionId, itemId, text);
-      const admission = record.session.editAndResend(edit.piEntryId, text).catch((error) => {
+      const admission = record.session.editAndResend(edit.itemText, text).catch((error) => {
         history.declineEditResend(sessionId, edit.previousBranchId, edit.runId);
         throw error;
       });
@@ -646,16 +652,4 @@ export function createAgentHub(
       }
     },
   };
-}
-
-/** @param event - 后端适配器事件 @returns 是否可直接广播给客户端 */
-function isClientStateEvent(
-  event: AgentSessionAdapterEvent
-): event is Extract<AgentSessionAdapterEvent, AgentStreamEvent> {
-  return (
-    event.type === 'session_model_changed' ||
-    event.type === 'pending_messages_changed' ||
-    event.type === 'session_info_changed' ||
-    event.type === 'thinking_level_changed'
-  );
 }

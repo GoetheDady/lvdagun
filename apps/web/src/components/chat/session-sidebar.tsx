@@ -43,7 +43,6 @@ export interface SessionSidebarProps {
   sessions: SessionSummary[];
   activeSessionId: string;
   loading: boolean;
-  creating: boolean;
   mutatingSessionId: string | null;
   error: string | null;
   hubConnectionStatus: HubConnectionStatus;
@@ -66,7 +65,6 @@ export function SessionSidebar({
   sessions,
   activeSessionId,
   loading,
-  creating,
   mutatingSessionId,
   error,
   hubConnectionStatus,
@@ -85,7 +83,7 @@ export function SessionSidebar({
   return (
     <>
       <aside className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground">
-        <div className="flex h-14 shrink-0 items-center gap-2.5 px-4">
+        <div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
           <img
             alt=""
             className="size-8 shrink-0 rounded-md"
@@ -97,8 +95,8 @@ export function SessionSidebar({
         </div>
 
         <div className="p-3">
-          <Button className="w-full justify-start" disabled={creating} onClick={onCreate}>
-            {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+          <Button className="w-full justify-start" onClick={onCreate}>
+            <Plus />
             新对话
           </Button>
         </div>

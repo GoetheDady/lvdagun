@@ -272,19 +272,6 @@ export class ProductHistory {
     this.repository.deleteSession(sessionId);
   }
 
-  /** @param sessionId - 产品会话 @param itemId - 产品用户条目 @returns Pi entry id */
-  resolveUserEntry(sessionId: string, itemId: string): string {
-    const session = this.requireActiveSession(sessionId);
-    const item = this.resolveRuns(session)
-      .flatMap((run) => run.items)
-      .find((candidate) => candidate.itemId === itemId && candidate.type === 'user_message');
-    const reference = session.sourceReferences.find(
-      (candidate) => candidate.itemId === item?.itemId && candidate.sourceType === 'pi_entry'
-    );
-    if (!reference) throw new Error('用户消息尚未与 Pi 执行历史对齐');
-    return reference.sourceId;
-  }
-
   /** @param sessionId - 产品会话 @param runId - 产品运行 @returns 最后助手 Pi entry id */
   resolveRunEntry(sessionId: string, runId: string): string {
     const session = this.requireActiveSession(sessionId);
@@ -308,22 +295,29 @@ export class ProductHistory {
   /**
    * 为编辑重发建立共享前缀的新产品分支并先持久化用户消息。
    *
+   * 编辑目标只按文本校验：分叉会话重启后 toolCallId 映射丢失，pi_entry 引用可能缺失，
+   * 依赖引用会把可编辑的消息误判成未对齐；真正的目标校验由 Pi 适配器按文本完成。
+   *
    * @param sessionId - 产品会话
    * @param itemId - 被编辑用户条目
    * @param text - 新文本
-   * @returns Pi entry、旧分支和新运行标识
+   * @returns 旧分支、新运行标识和被编辑消息的原文
    */
   beginEditResend(
     sessionId: string,
     itemId: string,
     text: string
-  ): { piEntryId: string; previousBranchId: string; runId: string } {
+  ): { previousBranchId: string; runId: string; itemText: string } {
     const session = this.requireActiveSession(sessionId);
     const targetRun = this.resolveRuns(session).find((run) =>
       run.items.some((item) => item.itemId === itemId && item.type === 'user_message')
     );
     if (!targetRun) throw new Error('只能编辑当前分支中的用户消息');
-    const piEntryId = this.resolveUserEntry(sessionId, itemId);
+    const item = targetRun.items.find(
+      (candidate): candidate is Extract<ProductTimelineItem, { type: 'user_message' }> =>
+        candidate.itemId === itemId && candidate.type === 'user_message'
+    );
+    if (!item) throw new Error('只能编辑当前分支中的用户消息');
     const previousBranchId = session.currentBranchId;
     const branchId = randomUUID();
     const runId = randomUUID();
@@ -345,7 +339,7 @@ export class ProductHistory {
     });
     session.currentBranchId = branchId;
     this.saveAndEmit(session);
-    return { piEntryId, previousBranchId, runId };
+    return { previousBranchId, runId, itemText: item.text };
   }
 
   /** @param sessionId - 产品会话 @param previousBranchId - 恢复分支 @param runId - 被拒绝运行 */

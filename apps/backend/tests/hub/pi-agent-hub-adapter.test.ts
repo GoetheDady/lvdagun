@@ -485,13 +485,40 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       expect.objectContaining({ name: 'lvdagun-session-execution-plan', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
     ]);
-    expect(pi.state.persistedFiles).toEqual([
-      {
-        path: '/tmp/lvdagun-test/sessions/test-session.jsonl',
-        content:
-          '{"type":"session","version":3,"id":"test-session","timestamp":"2026-08-15T00:00:00.000Z","cwd":"/Users/test"}\n',
-      },
-    ]);
+    // 懒持久化：创建会话不再预写 JSONL，文件由首条消息触发落盘。
+    expect(pi.state.persistedFiles).toEqual([]);
+  });
+
+  it('创建会话时优先使用指定的初始模型', async () => {
+    pi.state.providers.push({
+      id: 'openai',
+      name: 'OpenAI',
+      hasApiKeyAuth: true,
+      models: [{ id: 'gpt-a', name: 'GPT A' }],
+    });
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession(
+      { providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } },
+      { provider: 'openai', id: 'gpt-a' }
+    );
+
+    expect(session.getState()).toMatchObject({
+      model: { provider: 'openai', id: 'gpt-a', name: 'GPT A' },
+      modelWarning: null,
+    });
+  });
+
+  it('指定模型不可用时回退默认模型并提示', async () => {
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
+    const session = await hub.createSession(
+      { providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } },
+      { provider: 'openai', id: 'gpt-a' }
+    );
+
+    expect(session.getState()).toMatchObject({
+      model: { provider: 'anthropic', id: 'claude-a' },
+    });
+    expect(session.getState().modelWarning).toContain('已不可用');
   });
 
   it('列出可用模型并在空闲时切换会话模型', async () => {

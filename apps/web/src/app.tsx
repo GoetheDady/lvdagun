@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router';
 import type { ModelSettings } from '@lvdagun/protocol';
 
 import ChatPage from '@/pages/chat-page';
+import NewSessionPage from '@/pages/new-session-page';
 import SessionIndexPage from '@/pages/session-index-page';
 import SettingsPage, { AboutPanel } from '@/pages/settings-page';
 import ModelServicePage from '@/pages/model-service-page';
@@ -26,6 +27,14 @@ function App(): React.JSX.Element {
         element={
           <ConfigGuard>
             <SessionIndexPage />
+          </ConfigGuard>
+        }
+      />
+      <Route
+        path="/sessions/new"
+        element={
+          <ConfigGuard>
+            <NewSessionPage />
           </ConfigGuard>
         }
       />

@@ -11,11 +11,11 @@ import {
   Send,
   Split,
   Wrench,
-  X,
 } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 
 import type {
+  ProductAssistantBlock,
   ProductAgentRun,
   ProductAssistantSegmentItem,
   ProductCompactionItem,
@@ -28,6 +28,17 @@ import type {
 } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
 
 interface ChatTranscriptProps {
@@ -43,6 +54,18 @@ interface ChatTranscriptProps {
   onCancelEdit: () => void;
   onSubmitEdit: () => void;
   onFork: (runId: string) => void;
+}
+
+/**
+ * 判定一段助手内容是否为最终回复：含文本块、且不含任何工具调用块。
+ *
+ * agent 循环只有在模型不再调用工具时才会结束，因此"有 text、无 toolCall"的消息
+ * 即为最终交付物；与此项不相符的段（纯思考、带工具的边做边说）都归属执行过程。
+ *
+ * @param content - 助手片段的块数组 @returns 是否为最终回复
+ */
+function isFinalReply(content: ProductAssistantBlock[] | undefined): boolean {
+  return !!content?.some((block) => block.type === 'text') && !content?.some((block) => block.type === 'tool_call');
 }
 
 /** @param props.text - 当前可判断的运行阶段 @returns 助手回复末尾的瞬时运行标记 */
@@ -109,29 +132,58 @@ function UserMessage(props: {
   }, [props.editing]);
 
   if (props.editing) {
+    const editing = props.editing;
     return (
       <article className="flex justify-end">
-        <div className="w-full max-w-[min(88%,42rem)] rounded-md bg-primary p-2 text-primary-foreground">
+        {/* 编辑态沿用气泡轮廓，只是胀成可写卡片；底部发丝线分隔提示与操作，
+            重发会从这条消息换分支重新生成，后果必须写在操作旁边 */}
+        <div className="w-full max-w-[min(88%,42rem)] rounded-2xl rounded-br-md bg-primary px-4 pt-3 pb-2.5 text-primary-foreground shadow-sm">
           <textarea
             ref={textareaRef}
             aria-label="编辑用户消息"
-            className="block min-h-24 w-full resize-y rounded-sm bg-primary-foreground/10 px-2 py-1.5 text-sm leading-6 outline-none ring-1 ring-primary-foreground/25 focus:ring-primary-foreground/50"
-            value={props.editing.draft}
-            disabled={props.editing.submitting}
+            className="block max-h-64 min-h-16 w-full resize-none bg-transparent text-sm leading-6 text-primary-foreground outline-none disabled:opacity-60"
+            value={editing.draft}
+            disabled={editing.submitting}
             onChange={(event) => props.onEditDraftChange(event.target.value)}
+            onKeyDown={(event) => {
+              // 与消息输入框一致：Enter 重发、Shift+Enter 换行；旧版 Safari 会提前结束
+              // 组合态，但仍用 229 标识输入法按键，期间不能触发提交
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                props.onCancelEdit();
+                return;
+              }
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                props.onSubmitEdit();
+              }
+            }}
           />
-          <div className="mt-2 flex justify-end gap-1">
-            <Button size="icon" variant="ghost" title="取消编辑" onClick={props.onCancelEdit}>
-              <X />
+          <div className="mt-2 flex items-center gap-3 border-t border-primary-foreground/15 pt-2">
+            <p className="mr-auto text-xs text-primary-foreground/70">
+              重发后将从这条消息重新生成对话
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2.5 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
+              onClick={props.onCancelEdit}
+            >
+              取消
             </Button>
             <Button
-              size="icon"
-              variant="outline"
-              title="发送编辑后的消息"
-              disabled={!props.editing.draft.trim() || props.editing.submitting}
+              size="sm"
+              className="h-7 bg-primary-foreground px-3 text-primary hover:bg-primary-foreground/90"
+              disabled={!editing.draft.trim() || editing.submitting}
               onClick={props.onSubmitEdit}
             >
-              {props.editing.submitting ? <Loader2 className="animate-spin" /> : <Send />}
+              {props.editing.submitting ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Send className="size-3.5" />
+              )}
+              重发
             </Button>
           </div>
         </div>
@@ -350,21 +402,36 @@ function AssistantRun(props: {
     (item): item is ProductAssistantSegmentItem =>
       item.type === 'assistant_segment' && item.status !== 'superseded'
   );
-  const text = visibleSegments
-    .flatMap((segment) => segment.content)
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n');
+
+  // 最终回复 = run 内最后一个"含 text、无 toolCall"的段；此前的所有内容都属于执行过程。
+  // 从后往前找，保证取到真正收尾的那一段（去重后的倒数第一个符合条件的段）。
+  const finalItemId = [...visibleSegments].reverse().find((segment) => isFinalReply(segment.content))?.itemId;
+
   const active =
     props.history.draft?.runId === props.run.runId ? props.history.draft.activeSegment : null;
+  // 流式中若活动段已"含 text、无 tool"，即判定它就是要展示的最终回复。
+  const activeIsFinal = active !== null && isFinalReply(active.content);
+  const finalSegment = visibleSegments.find((segment) => segment.itemId === finalItemId);
+  const renderedFinal = finalSegment ?? (activeIsFinal && active ? active : null);
+  const finalText =
+    renderedFinal?.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n') ?? '';
+  // null = 用户尚未干预，跟随自动行为；boolean = 用户已主动展开/收起。
+  const [userProcessOpen, setUserProcessOpen] = useState<boolean | null>(null);
+  // 最终回复出现前保持展开，出现后自动收起；用户手动切换后按用户选择。
+  const processOpen = userProcessOpen ?? renderedFinal === null;
+
   const firstAssistantAt =
     visibleSegments[0]?.createdAt ?? active?.createdAt ?? props.run.startedAt;
 
-  const renderSegment = (segment: ProductAssistantSegmentItem, streaming: boolean) =>
-    segment.content.map((block, index) => {
-      if (block.type === 'text')
+  const renderBlocks = (blocks: ProductAssistantBlock[], streaming: boolean) =>
+    blocks.map((block, index) => {
+      if (block.type === 'text') {
         return <MarkdownText key={index} text={block.text} streaming={streaming} />;
-      if (block.type === 'thinking')
+      }
+      if (block.type === 'thinking') {
         return (
           <ThinkingBlock
             key={index}
@@ -373,6 +440,7 @@ function AssistantRun(props: {
             streaming={streaming}
           />
         );
+      }
       if (block.toolName === 'todo') return null;
       return (
         <ToolRun
@@ -386,45 +454,134 @@ function AssistantRun(props: {
       );
     });
 
+  /** @param segment - 助手片段 @returns 归入执行过程的内容块 */
+  const getProcessBlocks = (segment: ProductAssistantSegmentItem): ProductAssistantBlock[] =>
+    segment.itemId === finalItemId
+      ? segment.content.filter((block) => block.type !== 'text')
+      : segment.content;
+
+  // 执行过程只保留助手的思考、工具、重试与压缩；最终文本从工作抽屉中移出。
+  const renderProcessItems = () =>
+    props.run.items.map((item) => {
+      if (item.type === 'user_message') return null;
+      if (item.type === 'assistant_segment') {
+        if (item.status === 'superseded') return null;
+        const blocks = getProcessBlocks(item);
+        return blocks.length > 0 ? (
+          <div key={item.itemId} className="space-y-2.5">
+            {renderBlocks(blocks, false)}
+          </div>
+        ) : null;
+      }
+      if (item.type === 'retry') {
+        return (
+          <div key={item.itemId}>
+            <RetryNotice item={item} deadlineAt={props.history.draft?.retryDeadlineAt ?? null} />
+          </div>
+        );
+      }
+      if (item.type === 'compaction') return <CompactionNotice key={item.itemId} item={item} />;
+      return null;
+    });
+  const activeProcessBlocks = active
+    ? active.content.filter((block) => !activeIsFinal || block.type !== 'text')
+    : [];
+
+  // 工作抽屉元信息：只报真实数据——工具执行次数、运行总时长（仅落定后报时长）。
+  const toolCount = new Set([...results.keys(), ...tools.keys()]).size;
+  const hasProcessItems =
+    props.run.items.some(
+      (item) =>
+        item.type === 'tool_result' ||
+        item.type === 'retry' ||
+        item.type === 'compaction' ||
+        (item.type === 'assistant_segment' &&
+          item.status !== 'superseded' &&
+          getProcessBlocks(item).length > 0)
+    ) || activeProcessBlocks.length > 0;
+  const runSeconds =
+    props.run.startedAt !== null && props.run.settledAt !== null
+      ? Math.max(1, Math.round((props.run.settledAt - props.run.startedAt) / 1000))
+      : null;
+  const processMeta = [
+    toolCount > 0 ? `${toolCount} 次工具` : null,
+    runSeconds !== null ? `${runSeconds} 秒` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
+
   return (
     <section className="group/run space-y-5">
-      {props.run.items.map((item) => {
-        if (item.type === 'user_message') {
-          return (
-            <UserMessage
-              key={item.itemId}
-              item={item}
-              editable={item.itemId === props.userProps.editableUserItemId}
-              editing={
-                props.userProps.editing?.itemId === item.itemId ? props.userProps.editing : null
-              }
-              onStartEdit={props.userProps.onStartEdit}
-              onEditDraftChange={props.userProps.onEditDraftChange}
-              onCancelEdit={props.userProps.onCancelEdit}
-              onSubmitEdit={props.userProps.onSubmitEdit}
+      {props.run.items.map((item) =>
+        item.type === 'user_message' ? (
+          <UserMessage
+            key={item.itemId}
+            item={item}
+            editable={item.itemId === props.userProps.editableUserItemId}
+            editing={props.userProps.editing?.itemId === item.itemId ? props.userProps.editing : null}
+            onStartEdit={props.userProps.onStartEdit}
+            onEditDraftChange={props.userProps.onEditDraftChange}
+            onCancelEdit={props.userProps.onCancelEdit}
+            onSubmitEdit={props.userProps.onSubmitEdit}
+          />
+        ) : null
+      )}
+      {hasProcessItems ? (
+        <div className="max-w-[min(94%,48rem)] overflow-hidden rounded-lg border border-soy/25 border-l-[3px] border-l-soy/55 bg-soy-wash/55">
+          {/* 工作抽屉：豆面色属于 Agent 劳动痕迹；最终回复出现后平滑收拢。 */}
+          <button
+            type="button"
+            aria-expanded={processOpen}
+            onClick={() => setUserProcessOpen(!processOpen)}
+            className="flex min-h-10 w-full select-none items-center gap-2 px-3 text-left text-xs text-soy-foreground transition-colors hover:bg-soy/8 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+          >
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-soy/12">
+              <Wrench className="size-3.5" />
+            </span>
+            <span className="font-semibold tracking-wide">执行过程</span>
+            {processMeta ? (
+              <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
+                {processMeta}
+              </span>
+            ) : null}
+            <ChevronRight
+              className={`size-3.5 shrink-0 transition-transform duration-300 ${processOpen ? 'rotate-90' : ''}`}
             />
-          );
-        }
-        if (item.type === 'assistant_segment') {
-          return item.status === 'superseded' ? null : (
-            <div key={item.itemId} className="max-w-[min(94%,48rem)] space-y-2.5">
-              {renderSegment(item, false)}
+          </button>
+          <div
+            className="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+            style={{
+              // 自动收起（最终回复到达）时瞬时跳变：此刻页面正滚向底部，动画发生在视口外，
+              // 平滑收拢反而让抽屉"消失感"变成残影；只有用户手动开合才做动画。
+              transitionProperty: userProcessOpen === null ? 'none' : undefined,
+              gridTemplateRows: processOpen ? '1fr' : '0fr',
+              opacity: processOpen ? 1 : 0,
+            }}
+          >
+            <div className="overflow-hidden">
+              <div className="space-y-4 border-t border-soy/15 bg-card/35 px-3 py-3">
+                {renderProcessItems()}
+                {activeProcessBlocks.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {renderBlocks(activeProcessBlocks, true)}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          );
-        }
-        if (item.type === 'retry') {
-          return (
-            <div key={item.itemId} className="max-w-[min(94%,48rem)]">
-              <RetryNotice item={item} deadlineAt={props.history.draft?.retryDeadlineAt ?? null} />
-            </div>
-          );
-        }
-        if (item.type === 'compaction') return <CompactionNotice key={item.itemId} item={item} />;
-        return null;
-      })}
-      {active ? (
-        <div className="max-w-[min(94%,48rem)] space-y-2.5">{renderSegment(active, true)}</div>
+          </div>
+        </div>
       ) : null}
+
+      {/* 最终回复不加文字标签与装饰，靠豆面色执行抽屉区分层级。 */}
+      {renderedFinal ? (
+        <div className="max-w-[min(94%,48rem)] space-y-2.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+          {renderBlocks(
+            renderedFinal.content.filter((block) => block.type === 'text'),
+            renderedFinal !== finalSegment
+          )}
+        </div>
+      ) : null}
+
       {props.markerText ? <AgentRunMarker text={props.markerText} /> : null}
       {props.run.status !== 'accepted' && props.run.status !== 'running' ? (
         <div className="pointer-events-none flex min-h-7 items-center gap-1 text-muted-foreground opacity-0 transition-opacity group-hover/run:pointer-events-auto group-hover/run:opacity-100">
@@ -433,25 +590,42 @@ function AssistantRun(props: {
             variant="ghost"
             className="size-7"
             title="复制回复"
-            disabled={!text}
-            onClick={() => void navigator.clipboard.writeText(text)}
+            disabled={!finalText}
+            onClick={() => void navigator.clipboard.writeText(finalText)}
           >
             <Copy className="size-4" />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="分叉为新会话"
-            disabled={props.forking || props.actionsDisabled}
-            onClick={() => props.onFork(props.run.runId)}
-          >
-            {props.forking ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Split className="size-4 rotate-90" />
-            )}
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7"
+                title="分叉为新会话"
+                disabled={props.forking || props.actionsDisabled}
+              >
+                {props.forking ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Split className="size-4 rotate-90" />
+                )}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>分叉为新会话？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  将从这条回复创建一个独立的新会话，当前会话保持不变。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction onClick={() => props.onFork(props.run.runId)}>
+                  分叉
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {firstAssistantAt ? (
             <time className="px-1 text-xs">{formatTime(firstAssistantAt)}</time>
           ) : null}

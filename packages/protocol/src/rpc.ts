@@ -13,6 +13,7 @@ import type {
   ThinkingLevel,
 } from './chat.ts';
 import type {
+  AvailableModel,
   ModelInfo,
   ModelReference,
   ModelSettings,
@@ -53,15 +54,13 @@ export interface RpcError {
 }
 
 export interface InitializeParams {
+  /** 客户端请求的应用协议版本，必须与服务端一致 */
   protocolVersion: number;
-  clientInfo: { name: string; version: string };
-  capabilities: Record<string, unknown>;
 }
 
 export interface InitializeResult {
+  /** 服务端接受的应用协议版本 */
   protocolVersion: number;
-  serverInfo: { name: string; version: string };
-  capabilities: Record<string, unknown>;
 }
 
 export interface SessionSubscribeParams {
@@ -86,10 +85,11 @@ export interface RpcMethodParams {
   'catalog/testConnection': { provider: string; apiKey: string; modelId: string };
   'catalog/listProviders': undefined;
   'catalog/listModels': { provider: string };
+  'catalog/listAvailableModels': undefined;
   'session/list': undefined;
   'session/subscribe': SessionSubscribeParams;
   'session/unsubscribe': SessionUnsubscribeParams;
-  'session/create': undefined;
+  'session/create': { model?: ModelReference };
   'session/archive': { sessionId: string };
   'session/delete': { sessionId: string };
   'session/messages': { sessionId: string };
@@ -102,7 +102,6 @@ export interface RpcMethodParams {
   'session/pending/steer': { sessionId: string; messageId: string };
   'session/pending/remove': { sessionId: string; messageId: string };
   'session/pending/take': { sessionId: string };
-  'session/pending/discard': { sessionId: string };
   'session/thinkingLevel': { sessionId: string; level: ThinkingLevel };
   'session/model': { sessionId: string; model: ModelReference };
 }
@@ -114,6 +113,7 @@ export interface RpcMethodResult {
   'catalog/testConnection': TestConnectionResult;
   'catalog/listProviders': ProviderInfo[];
   'catalog/listModels': ModelInfo[];
+  'catalog/listAvailableModels': AvailableModel[];
   'session/list': SessionSummary[];
   'session/subscribe': import('./chat.ts').SessionSnapshotEvent;
   'session/unsubscribe': null;
@@ -130,7 +130,6 @@ export interface RpcMethodResult {
   'session/pending/steer': null;
   'session/pending/remove': null;
   'session/pending/take': TakePendingMessagesResult;
-  'session/pending/discard': null;
   'session/thinkingLevel': AgentSessionState;
   'session/model': AgentSessionState;
 }
@@ -232,17 +231,10 @@ const TestConnectionSchema = z.union([
   z.object({ ok: z.literal(false), message: z.string() }),
 ]);
 
-const InitializeParamsSchema = z.object({
-  protocolVersion: z.number().int(),
-  clientInfo: z.object({ name: NonEmptyString, version: NonEmptyString }),
-  capabilities: RecordSchema,
-});
+// 握手双方只消费协议版本；schema 非 strict，历史客户端多发的字段会被静默忽略。
+const InitializeParamsSchema = z.object({ protocolVersion: z.number().int() });
 
-const InitializeResultSchema = z.object({
-  protocolVersion: z.number().int(),
-  serverInfo: z.object({ name: NonEmptyString, version: NonEmptyString }),
-  capabilities: RecordSchema,
-});
+const InitializeResultSchema = z.object({ protocolVersion: z.number().int() });
 
 const SessionParamsSchema = z.object({ sessionId: NonEmptyString });
 /** 无参数方法仍接受空的 params 占位对象，与旧协议行为一致。 */
@@ -256,13 +248,14 @@ const RPC_METHOD_PARAMS: Record<RpcMethod, z.ZodType> = {
   'catalog/testConnection': z.object({ provider: NonEmptyString, apiKey: z.string(), modelId: NonEmptyString }),
   'catalog/listProviders': NoParamsSchema,
   'catalog/listModels': z.object({ provider: NonEmptyString }),
+  'catalog/listAvailableModels': NoParamsSchema,
   'session/list': NoParamsSchema,
   'session/subscribe': SessionParamsSchema,
   'session/unsubscribe': z.union([
     z.object({ scope: z.literal('session'), sessionId: NonEmptyString }),
     z.object({ scope: z.literal('list') }),
   ]),
-  'session/create': NoParamsSchema,
+  'session/create': z.object({ model: ModelReferenceSchema.optional() }).optional(),
   'session/archive': SessionParamsSchema,
   'session/delete': SessionParamsSchema,
   'session/messages': SessionParamsSchema,
@@ -275,7 +268,6 @@ const RPC_METHOD_PARAMS: Record<RpcMethod, z.ZodType> = {
   'session/pending/steer': SessionParamsSchema.extend({ messageId: NonEmptyString }),
   'session/pending/remove': SessionParamsSchema.extend({ messageId: NonEmptyString }),
   'session/pending/take': SessionParamsSchema,
-  'session/pending/discard': SessionParamsSchema,
   'session/thinkingLevel': SessionParamsSchema.extend({ level: NonEmptyString }),
   'session/model': SessionParamsSchema.extend({ model: ModelReferenceSchema }),
 };
@@ -288,6 +280,7 @@ const RPC_METHOD_RESULTS: Record<RpcMethod, z.ZodType> = {
   'catalog/testConnection': TestConnectionSchema,
   'catalog/listProviders': z.array(NamedItemSchema),
   'catalog/listModels': z.array(NamedItemSchema),
+  'catalog/listAvailableModels': z.array(AvailableModelSchema),
   'session/list': z.array(SessionSummarySchema),
   'session/subscribe': z.object({
     type: z.literal('session_snapshot'),
@@ -308,7 +301,6 @@ const RPC_METHOD_RESULTS: Record<RpcMethod, z.ZodType> = {
   'session/pending/steer': NullResult,
   'session/pending/remove': NullResult,
   'session/pending/take': z.object({ texts: z.array(z.string()) }),
-  'session/pending/discard': NullResult,
   'session/thinkingLevel': SessionStateSchema,
   'session/model': SessionStateSchema,
 };

@@ -117,6 +117,21 @@ body,
   ::-webkit-scrollbar-thumb:hover {
     background-color: var(--input);
   }
+  /* 允许 height: 0 ↔ auto 参与过渡，让思考块/工具卡的 details 平滑开合；
+     不支持 ::details-content 的浏览器自动退回瞬时开合，无需 JS 兼容层 */
+  :root {
+    interpolate-size: allow-keywords;
+  }
+  details::details-content {
+    height: 0;
+    overflow: hidden;
+    transition:
+      height 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+      content-visibility 0.3s allow-discrete;
+  }
+  details[open]::details-content {
+    height: auto;
+  }
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -163,6 +178,16 @@ body,
       border: 1px solid var(--border);
       border-radius: calc(var(--radius) - 6px);
       padding: 0.1em 0.35em;
+    }
+    & pre {
+      /* 窄屏下长代码行不撑破布局，块内横向滚动 */
+      overflow-x: auto;
+    }
+    & table {
+      /* 窄屏下宽表格块级化后横向滚动，避免撑破容器 */
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
     }
     & img {
       border: 1px solid var(--border);

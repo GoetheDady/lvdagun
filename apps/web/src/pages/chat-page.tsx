@@ -1,16 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { Archive, Loader2, MessageSquareOff, Send, Square } from 'lucide-react';
-import { useDefaultLayout } from 'react-resizable-panels';
+import { Archive, Loader2, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
 
-import { SessionSidebar } from '@/components/chat/session-sidebar';
+import { ChatShell } from '@/components/chat/chat-shell';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
 import { PendingMessages } from '@/components/chat/pending-messages';
 import { SessionExecutionPlanView } from '@/components/chat/session-execution-plan';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import {
+  COMPOSER_BUTTON_CLASS,
+  COMPOSER_GROUP_CLASS,
+  COMPOSER_TEXTAREA_CLASS,
+  COMPOSER_TOOL_ROW_CLASS,
+  SUGGESTIONS,
+} from '@/components/chat/composer-constants';
 import { useChatSession } from '@/hooks/use-chat-session';
 import {
   selectEditableUserItemId,
@@ -18,14 +23,7 @@ import {
   selectSessionTitle,
 } from '@/state/chat-session-selectors';
 import type { SessionUnavailableReason } from '@/state/chat-session-state';
-import { type SessionList, useSessionList } from '@/hooks/use-session-list';
-import { useHubConnection } from '@/hooks/use-hub-connection';
-
-/** 空会话中可直接填入输入框的示例提示。 */
-const SUGGESTIONS = ['总结今天的重要新闻', '帮我检查一个本地项目', '制定本周待办计划'];
-
-/** 会话侧栏布局在浏览器中的稳定标识。 */
-const CHAT_LAYOUT_ID = 'chat-workspace-layout';
+import type { SessionList } from '@/hooks/use-session-list';
 
 /**
  * 把取回文本放在现有草稿之前，并用空行分隔每条消息。
@@ -39,7 +37,7 @@ function prependDraft(texts: string[], draft: string): string {
 }
 
 /**
- * 从 URL 解析当前会话，并在会话变化时重建客户端状态。
+ * 从 URL 解析当前会话。
  *
  * @returns 按 session id 寻址的对话工作台
  */
@@ -48,95 +46,17 @@ function ChatPage(): React.JSX.Element {
   if (!sessionId) {
     return <Navigate to="/" replace />;
   }
-  return <ChatShell sessionId={sessionId} />;
-}
-
-/**
- * 保持桌面端会话侧栏稳定，只在切换时重建右侧对话区域。
- *
- * @param props - 当前 URL 中的会话标识
- * @returns 对话工作台
- */
-function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
-  const navigate = useNavigate();
-  const sessionList = useSessionList();
-  const hubConnection = useHubConnection();
-  const persistedLayout = useDefaultLayout({
-    id: CHAT_LAYOUT_ID,
-    panelIds: ['session-sidebar', 'chat-workspace'],
-  });
-
-  /**
-   * 创建持久化会话并导航到其 URL。
-   *
-   * @returns 无返回值
-   */
-  const handleNewSession = (): void => {
-    void sessionList.createSession().then((createdId) => {
-      if (createdId) {
-        navigate(`/sessions/${encodeURIComponent(createdId)}`);
-      }
-    });
-  };
-
-  /**
-   * 归档指定会话。
-   *
-   * @param targetSessionId - 要归档的会话标识
-   * @returns 无返回值
-   */
-  const handleArchiveSession = (targetSessionId: string): void => {
-    void sessionList.archiveSession(targetSessionId);
-  };
-
-  /**
-   * 永久删除指定会话。
-   *
-   * @param targetSessionId - 要永久删除的会话标识
-   * @returns 无返回值
-   */
-  const handleDeleteSession = (targetSessionId: string): void => {
-    void sessionList.deleteSession(targetSessionId);
-  };
-
   return (
-    <main className="flex h-dvh min-h-[32rem] min-w-[64rem] overflow-hidden bg-background">
-      <ResizablePanelGroup id={CHAT_LAYOUT_ID} orientation="horizontal" {...persistedLayout}>
-        <ResizablePanel
-          id="session-sidebar"
-          defaultSize="256px"
-          minSize="208px"
-          maxSize="384px"
-          groupResizeBehavior="preserve-pixel-size"
-        >
-          <SessionSidebar
-            sessions={sessionList.sessions}
-            activeSessionId={sessionId}
-            loading={sessionList.loading}
-            creating={sessionList.creating}
-            mutatingSessionId={sessionList.mutatingSessionId}
-            error={sessionList.error}
-            hubConnectionStatus={hubConnection.status}
-            onCreate={handleNewSession}
-            onSelect={(selectedId) => navigate(`/sessions/${encodeURIComponent(selectedId)}`)}
-            onArchive={handleArchiveSession}
-            onDelete={handleDeleteSession}
-            onRename={sessionList.renameSession}
-            onReconnect={hubConnection.reconnect}
-            onSettings={() => navigate('/settings')}
-          />
-        </ResizablePanel>
-
-        <ResizableHandle
-          aria-label="调整侧栏宽度"
-          className="bg-sidebar-border transition-colors hover:bg-wood focus-visible:bg-primary focus-visible:ring-primary/30"
+    <ChatShell activeSessionId={sessionId}>
+      {({ sessionList, onOpenSidebar }) => (
+        <ChatWorkspace
+          key={sessionId}
+          sessionId={sessionId}
+          sessionList={sessionList}
+          onOpenSidebar={onOpenSidebar}
         />
-
-        <ResizablePanel id="chat-workspace" className="min-w-0">
-          <ChatWorkspace key={sessionId} sessionId={sessionId} sessionList={sessionList} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </main>
+      )}
+    </ChatShell>
   );
 }
 
@@ -149,9 +69,12 @@ function ChatShell({ sessionId }: { sessionId: string }): React.JSX.Element {
 function ChatWorkspace({
   sessionId,
   sessionList,
+  onOpenSidebar,
 }: {
   sessionId: string;
   sessionList: SessionList;
+  /** 窄屏下唤出会话抽屉；宽屏不传，头部不渲染唤出按钮。 */
+  onOpenSidebar?: () => void;
 }): React.JSX.Element {
   const navigate = useNavigate();
   const {
@@ -163,7 +86,6 @@ function ChatWorkspace({
     steerPendingMessage,
     removePendingMessage,
     takePendingMessages,
-    discardPendingMessages,
     setThinkingLevel,
     setModel,
   } = useChatSession(sessionId);
@@ -176,6 +98,11 @@ function ChatWorkspace({
   } | null>(null);
   const [forkingRunId, setForkingRunId] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const focusedOnceRef = useRef(false);
+  // 挂载首帧禁用 composer 过渡，避免 focus-within 展开样式在初次挂载时
+  // 被浏览器当作样式变化重播一遍“展开”动画（换页后输入框蹦一下）
+  const [composerSettled, setComposerSettled] = useState(false);
   const followsOutputRef = useRef(true);
   const lastScrollTopRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -184,10 +111,23 @@ function ChatWorkspace({
   const sessionTitle = selectSessionTitle(state, sidebarTitle);
   const editableUserItemId = selectEditableUserItemId(state);
   const runMarker = selectRunMarker(state);
+  // 与发送按钮、编辑操作共用的执行前提：状态已同步且会话可执行
+  const canAct = state.synchronized && state.session?.executionAvailable !== false;
 
   useEffect(() => {
     document.title = `${sessionTitle} - 驴打滚`;
   }, [sessionTitle]);
+
+  // 挂载后、首帧绘制前聚焦输入框：focus-within 首帧即展开，与草稿页停靠态
+  // （聚焦展开 768×126）同宽同高，换页零突变；loading 期间输入框不禁用，
+  // 提前打字的文本保留在本地草稿，快照未到时发不出去（按钮闸门）
+  useLayoutEffect(() => {
+    if (focusedOnceRef.current || state.unavailableReason) return;
+    focusedOnceRef.current = true;
+    textareaRef.current?.focus();
+    const raf = requestAnimationFrame(() => setComposerSettled(true));
+    return () => cancelAnimationFrame(raf);
+  }, [state.unavailableReason]);
 
   // useLayoutEffect：滚动必须在绘制前完成，否则新内容先画出、下一帧才滚，出现可见抖动。
   // 流式事件高频到达，smooth 动画反复重启只会永远落后于内容增长，必须即时贴底。
@@ -216,8 +156,6 @@ function ChatWorkspace({
 
   /**
    * 校验并发送当前输入。
-   *
-   * @returns 无返回值
    */
   const handleSend = (): void => {
     const text = input.trim();
@@ -232,7 +170,12 @@ function ChatWorkspace({
     }
     setInput('');
     void send(text).then((accepted) => {
-      if (!accepted) setInput((draft) => prependDraft([text], draft));
+      if (accepted) {
+        // 发送成功后收起输入区：焦点还留在发送按钮或 textarea 内，主动移出让 focus-within 失效
+        (document.activeElement as HTMLElement | null)?.blur();
+      } else {
+        setInput((draft) => prependDraft([text], draft));
+      }
     });
   };
 
@@ -266,7 +209,18 @@ function ChatWorkspace({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center border-b border-border/70 px-5">
+      <header className="relative flex h-12 shrink-0 items-center px-5">
+        {onOpenSidebar ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="打开会话列表"
+            className="absolute left-2"
+            onClick={onOpenSidebar}
+          >
+            <Menu />
+          </Button>
+        ) : null}
         <div className="mx-auto w-full max-w-3xl min-w-0">
           <h2 className="truncate text-sm font-semibold">{sessionTitle}</h2>
         </div>
@@ -274,7 +228,7 @@ function ChatWorkspace({
 
       <section
         ref={transcriptRef}
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable_both-edges]"
         onScroll={() => {
           const element = transcriptRef.current;
           if (!element) return;
@@ -291,8 +245,12 @@ function ChatWorkspace({
           {!state.loading && !hasTranscript && !runMarker ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-7 text-center">
               <div className="space-y-3">
-                <h3 className="font-display text-4xl font-bold tracking-wide">有什么事，吩咐吧。</h3>
-                <p className="text-sm text-muted-foreground">驴打滚在本机待命，对话不会离开这台电脑</p>
+                <h3 className="font-display text-4xl font-bold tracking-wide">
+                  有什么事，吩咐吧。
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  驴打滚在本机待命，对话不会离开这台电脑
+                </p>
               </div>
               <div className="flex max-w-xl flex-wrap justify-center gap-2">
                 {SUGGESTIONS.map((suggestion) => (
@@ -315,7 +273,7 @@ function ChatWorkspace({
               editableUserItemId={editableUserItemId}
               editing={editing}
               forkingRunId={forkingRunId}
-              actionsDisabled={!state.synchronized || state.session?.executionAvailable === false}
+              actionsDisabled={!canAct}
               onStartEdit={(itemId, draft) => setEditing({ itemId, draft, submitting: false })}
               onEditDraftChange={(draft) =>
                 setEditing((current) => (current ? { ...current, draft } : null))
@@ -346,16 +304,11 @@ function ChatWorkspace({
           <div
             role="group"
             aria-label="消息输入区"
-            className="rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/10"
+            className={`${COMPOSER_GROUP_CLASS} ${composerSettled ? '' : '!transition-none'}`}
           >
             <PendingMessages
               messages={state.session?.pendingMessages ?? []}
-              disabled={
-                state.aborting ||
-                editing !== null ||
-                !state.synchronized ||
-                state.session?.executionAvailable === false
-              }
+              disabled={state.aborting || editing !== null || !canAct}
               steerDisabled={!state.isRunning}
               onSteer={(messageId) => void steerPendingMessage(messageId)}
               onRemove={(messageId) => void removePendingMessage(messageId)}
@@ -364,16 +317,19 @@ function ChatWorkspace({
                   setInput((draft) => prependDraft(texts, draft));
                 });
               }}
-              onDiscardAll={() => void discardPendingMessages()}
+              // 丢弃 = 服务端取回后不保留文本：take 本身就把消息移出待处理区
+              onDiscardAll={() => void takePendingMessages()}
             />
+            {/* 未聚焦时收成单行，聚焦后随工具行一起展开；高度交给 min-height 过渡，无需 JS 量高。
+                快照未到不禁用：挂载即聚焦展开（与草稿停靠态同几何，避免换页蹦跳），
+                误发由发送按钮的 !canAct 闸门拦住 */}
             <textarea
-              className="block max-h-40 min-h-20 w-full resize-none bg-transparent px-3 pt-3 pb-1 text-sm leading-5 placeholder:text-muted-foreground focus-visible:outline-none"
+              ref={textareaRef}
+              className={`${COMPOSER_TEXTAREA_CLASS} ${composerSettled ? '' : '!transition-none'}`}
               placeholder={inputPlaceholder}
-              rows={2}
+              rows={1}
               value={input}
-              disabled={
-                state.loading || editing !== null || state.session?.executionAvailable === false
-              }
+              disabled={editing !== null || state.session?.executionAvailable === false}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 // 旧版 Safari 会提前结束组合态，但仍用 229 标识输入法按键。
@@ -384,15 +340,16 @@ function ChatWorkspace({
                 }
               }}
             />
-            <div className="flex min-h-11 items-center justify-end gap-1 px-2 pb-2">
+            <div
+              className={`${COMPOSER_TOOL_ROW_CLASS} ${composerSettled ? '' : '!transition-none'}`}
+            >
               {state.session ? (
                 <>
                   <ModelSelector
                     value={state.session.model}
                     models={state.session.availableModels}
                     disabled={
-                      !state.synchronized ||
-                      state.session?.executionAvailable === false ||
+                      !canAct ||
                       state.isRunning ||
                       state.settingModel ||
                       state.settingThinkingLevel ||
@@ -406,60 +363,57 @@ function ChatWorkspace({
                     key={`${state.session.model.provider}:${state.session.model.id}`}
                     value={state.session.thinkingLevel}
                     levels={state.session.availableThinkingLevels}
-                    disabled={
-                      !state.synchronized ||
-                      state.session?.executionAvailable === false ||
-                      state.isRunning ||
-                      state.settingModel ||
-                      editing !== null
-                    }
+                    disabled={!canAct || state.isRunning || state.settingModel || editing !== null}
                     loading={state.settingThinkingLevel}
                     onCommit={setThinkingLevel}
                   />
                 </>
               ) : null}
-              {state.isRunning ? (
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="rounded-lg"
-                  disabled={state.aborting}
-                  title="停止"
-                  aria-label="停止"
-                  onClick={() => {
-                    void abort().then((texts) => {
-                      setInput((draft) => prependDraft(texts, draft));
-                    });
-                  }}
-                >
-                  {state.aborting ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    <Square className="fill-current" />
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  className="rounded-lg"
-                  disabled={
-                    !input.trim() ||
-                    state.sending ||
-                    state.settingModel ||
-                    state.settingThinkingLevel ||
-                    state.loading ||
-                    !state.synchronized ||
-                    state.session?.executionAvailable === false ||
-                    editing !== null
-                  }
-                  title="发送"
-                  aria-label="发送"
-                  onClick={handleSend}
-                >
-                  {state.sending ? <Loader2 className="animate-spin" /> : <Send />}
-                </Button>
-              )}
             </div>
+            {/* 发送/停止按钮常驻输入区右下角：不能留在工具行内，否则收起时的
+                invisible 会被绝对定位子元素继承，小形态下按钮跟着消失 */}
+            {/* 忙碌归为一个图标：加载和发送中的未知态都显示 Loader，
+                只有权威状态（运行中/空闲）才分别切 Stop/Send，避免路由切换时闪回 Send */}
+            {state.isRunning ? (
+              <Button
+                size="icon"
+                variant="outline"
+                className={COMPOSER_BUTTON_CLASS}
+                disabled={state.aborting}
+                title="停止"
+                aria-label="停止"
+                onClick={() => {
+                  void abort().then((texts) => {
+                    setInput((draft) => prependDraft(texts, draft));
+                  });
+                }}
+              >
+                {state.aborting ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Square className="fill-current" />
+                )}
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                className={`${COMPOSER_BUTTON_CLASS} ${composerSettled ? '' : '!transition-none'}`}
+                disabled={
+                  !input.trim() ||
+                  state.loading ||
+                  state.sending ||
+                  state.settingModel ||
+                  state.settingThinkingLevel ||
+                  !canAct ||
+                  editing !== null
+                }
+                title="发送"
+                aria-label="发送"
+                onClick={handleSend}
+              >
+                {state.loading || state.sending ? <Loader2 className="animate-spin" /> : <Send />}
+              </Button>
+            )}
           </div>
         </div>
       </footer>
@@ -478,7 +432,7 @@ function UnavailableWorkspace({ reason }: { reason: SessionUnavailableReason }):
   const Icon = archived ? Archive : MessageSquareOff;
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center px-5">
+      <header className="flex h-12 shrink-0 items-center px-5">
         <div>
           <h2 className="text-sm font-semibold">当前会话</h2>
           <p className="text-[11px] text-muted-foreground">{archived ? '已归档' : '不可显示'}</p>
