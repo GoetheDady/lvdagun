@@ -12,7 +12,6 @@ import {
   Split,
   Wrench,
 } from 'lucide-react';
-import { Streamdown } from 'streamdown';
 
 import type {
   ProductAssistantBlock,
@@ -25,7 +24,9 @@ import type {
   ProductToolDraft,
   ProductToolResultItem,
   ProductUserMessageItem,
+  SubagentDelegation,
 } from '@lvdagun/protocol';
+import { parseSubagentDelegations } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -40,6 +41,8 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
+import { MarkdownText } from './markdown-text';
+import { SubagentCards } from './subagent-card';
 
 interface ChatTranscriptProps {
   history: ProductSessionHistory | null;
@@ -100,20 +103,6 @@ function formatTime(timestamp: number): string {
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(timestamp);
-}
-
-/** @param props.text - Markdown 文本 @param props.streaming - 是否流式 @returns 文本块 */
-function MarkdownText(props: { text: string; streaming?: boolean }): React.JSX.Element {
-  return (
-    <Streamdown
-      className="chat-markdown text-[15px] leading-7"
-      mode={props.streaming ? 'streaming' : 'static'}
-      isAnimating={props.streaming}
-      caret={props.streaming ? 'block' : undefined}
-    >
-      {props.text}
-    </Streamdown>
-  );
 }
 
 /** @param props - 产品用户消息与操作 @returns 用户气泡 */
@@ -244,6 +233,46 @@ function ThinkingBlock(props: { text: string; streaming: boolean; redacted?: boo
   );
 }
 
+/**
+ * 解析委派工具调用的子 Agent 投影。
+ *
+ * @param call - 工具调用块
+ * @param result - 已持久化的工具结果
+ * @param draft - 运行中的实时草稿
+ * @returns 委派投影;结果、草稿、初始参数依次回退,保证卡片随调用出现
+ */
+function resolveDelegations(
+  call: ProductToolCallBlock,
+  result?: ProductToolResultItem,
+  draft?: ProductToolDraft
+): SubagentDelegation[] {
+  if (result?.delegations) return result.delegations;
+  if (draft?.partialResult) {
+    const details =
+      typeof draft.partialResult === 'object' && draft.partialResult !== null
+        ? (draft.partialResult as { details?: unknown }).details
+        : undefined;
+    const parsed = details === undefined ? null : parseSubagentDelegations(details);
+    if (parsed) return parsed;
+  }
+  const tasks = (call.args as { tasks?: Array<{ agent: string; task: string }> } | null)?.tasks;
+  const now = Date.now();
+  return (tasks ?? []).map((task, index) => ({
+    id: `${call.toolCallId}:${index}`,
+    agent: task.agent as SubagentDelegation['agent'],
+    task: task.task,
+    status: 'running',
+    childSessionId: null,
+    result: null,
+    usage: null,
+    error: null,
+    steps: 0,
+    activity: null,
+    startedAt: now,
+    endedAt: null,
+  }));
+}
+
 /** @param props - 工具调用、最终结果和实时草稿 @returns 工具块 */
 function ToolRun(props: {
   call: ProductToolCallBlock;
@@ -259,6 +288,14 @@ function ToolRun(props: {
     !open && props.call.toolName === 'bash' && typeof command === 'string'
       ? command
       : props.call.toolName;
+  if (props.call.toolName === 'delegate') {
+    return (
+      <SubagentCards
+        entrance={props.entrance}
+        delegations={resolveDelegations(props.call, props.result, props.draft)}
+      />
+    );
+  }
   return (
     <details
       className={`overflow-hidden rounded-lg bg-soy-wash ${

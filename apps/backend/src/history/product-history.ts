@@ -272,6 +272,51 @@ export class ProductHistory {
     this.repository.deleteSession(sessionId);
   }
 
+  /**
+   * 收集会话历史中委派产生的全部子会话标识。
+   *
+   * @param sessionId - 产品会话
+   * @returns 去重后的子会话 id 列表
+   */
+  collectChildSessionIds(sessionId: string): string[] {
+    const session = this.requireSession(sessionId);
+    const ids = new Set<string>();
+    for (const run of this.resolveRuns(session)) {
+      for (const item of run.items) {
+        if (item.type !== 'tool_result' || !item.delegations) continue;
+        for (const delegation of item.delegations) {
+          if (delegation.childSessionId) ids.add(delegation.childSessionId);
+        }
+      }
+    }
+    return [...ids];
+  }
+
+  /**
+   * 过滤出删除后不再被任何剩余会话引用的子会话。
+   *
+   * 分叉会话会复制委派投影,因此子会话可能被源会话和派生会话同时引用;
+   * 只有引用计数归零的子会话才可以级联删除。
+   *
+   * @param childSessionIds - 待检查的子会话 id
+   * @returns 其中不再被引用的子会话 id
+   */
+  filterUnreferencedChildSessionIds(childSessionIds: string[]): string[] {
+    if (childSessionIds.length === 0) return [];
+    const referenced = new Set<string>();
+    for (const stored of this.repository.listSessions()) {
+      for (const run of stored.branches.flatMap((branch) => branch.runs)) {
+        for (const item of run.items) {
+          if (item.type !== 'tool_result' || !item.delegations) continue;
+          for (const delegation of item.delegations) {
+            if (delegation.childSessionId) referenced.add(delegation.childSessionId);
+          }
+        }
+      }
+    }
+    return childSessionIds.filter((id) => !referenced.has(id));
+  }
+
   /** @param sessionId - 产品会话 @param runId - 产品运行 @returns 最后助手 Pi entry id */
   resolveRunEntry(sessionId: string, runId: string): string {
     const session = this.requireActiveSession(sessionId);

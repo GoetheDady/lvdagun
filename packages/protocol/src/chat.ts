@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 
 import type { AvailableModel } from './model.ts';
+import type { SubagentDelegation } from './subagent.ts';
 
 /** 产品会话历史 schema 版本。 */
 export const PRODUCT_HISTORY_SCHEMA_VERSION = 1;
@@ -89,6 +90,8 @@ export interface ProductToolResultItem {
   isError: boolean;
   /** 仅 Todo 工具结果携带；null 表示合法清空，缺失表示不是合法 Todo 快照。 */
   executionPlan?: SessionExecutionPlan | null;
+  /** 仅委派工具结果携带;保存各子 Agent 委派的最终投影与子会话关联。 */
+  delegations?: SubagentDelegation[];
 }
 
 /** 下一次模型调用开始后隐藏已经全部完成的计划。 */

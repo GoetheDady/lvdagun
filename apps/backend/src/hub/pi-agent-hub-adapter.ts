@@ -34,6 +34,8 @@ import {
 import { PiAgentSessionAdapter } from './pi-agent-session-adapter';
 import { createAutoSessionTitleExtension } from '../extensions/auto-session-title/auto-session-title-extension';
 import { createPendingMessageExtension } from '../extensions/pending-messages/pending-message-extension';
+import { createSubagentExtension } from '../extensions/subagent/subagent-extension';
+import { createSubagentRunner } from '../extensions/subagent/subagent-runner';
 import { loadTodoExtension } from '../extensions/todo/todo-extension';
 
 const INFRA_PROVIDERS = new Set([
@@ -45,7 +47,7 @@ const INFRA_PROVIDERS = new Set([
 ]);
 
 const DEFAULT_SYSTEM_PROMPT = '你是驴打滚,运行在用户电脑上的个人 AI 管家。回答简洁、直接、用中文。';
-const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write', 'todo'];
+const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write', 'todo', 'delegate'];
 
 /**
  * 创建基于 Pi SDK 的 Agent Hub。
@@ -58,6 +60,7 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
   const cwd = homedir();
   const sessionDir = join(dataDir, 'sessions');
   const archiveDir = join(dataDir, 'archived-sessions');
+  const subagentSessionDir = join(dataDir, 'subagent-sessions');
   let runtimePromise: Promise<ModelRuntime> | null = null;
 
   /**
@@ -103,6 +106,10 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
     const todoExtension = await loadTodoExtension();
     const runtime = await getRuntime();
     await injectCredentials(settings);
+    // 子 Agent 与父会话共享同一份模型运行时;子会话 JSONL 落在独立的 subagent-sessions 目录。
+    const subagentExtension = createSubagentExtension({
+      runner: createSubagentRunner({ dataDir, getRuntime }),
+    });
     const availableModels = await runtime.getAvailable();
 
     // 客户端在草稿态预选的模型不在当前可用列表（如凭据被移除）时回退到默认模型。
@@ -166,6 +173,7 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
             pendingMessages.extension,
             ...(todoExtension ? [todoExtension] : []),
             createAutoSessionTitleExtension(runtime),
+            subagentExtension,
           ],
           noSkills: true,
           noPromptTemplates: true,
@@ -223,6 +231,7 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
       await Promise.all([
         rm(sessionDir, { recursive: true, force: true }),
         rm(archiveDir, { recursive: true, force: true }),
+        rm(subagentSessionDir, { recursive: true, force: true }),
       ]);
       await Promise.all([
         mkdir(sessionDir, { recursive: true, mode: 0o700 }),
@@ -356,6 +365,16 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
     async deleteSession(sessionId) {
       const stored = await findAvailableSession(sessionId);
       await unlink(stored.path);
+    },
+
+    async deleteChildSessions(childSessionIds) {
+      if (childSessionIds.length === 0) return;
+      const stored = await PiSessionManager.listAll(subagentSessionDir);
+      await Promise.all(
+        stored
+          .filter((session) => childSessionIds.includes(session.id))
+          .map((session) => unlink(session.path).catch(() => undefined))
+      );
     },
   };
 }

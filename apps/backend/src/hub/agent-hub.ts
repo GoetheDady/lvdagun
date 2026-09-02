@@ -474,11 +474,16 @@ export function createAgentHub(
     async deleteSession(sessionId: string): Promise<void> {
       const piSessionId = history.getPiSessionId(sessionId);
       history.setLifecycle(sessionId, 'deleting');
+      // 级联删除子会话:委派投影随产品历史一起消失,子会话 JSONL 在删除后按引用计数清理。
+      const childSessionIds = history.collectChildSessionIds(sessionId);
       try {
         await changeLifecycle(sessionId, { type: 'session_deleted', sessionId }, async () =>
           hubAdapter.deleteSession(piSessionId)
         );
         history.finishDelete(sessionId);
+        await hubAdapter.deleteChildSessions(
+          history.filterUnreferencedChildSessionIds(childSessionIds)
+        );
       } catch (error) {
         history.setLifecycle(sessionId, 'active');
         throw error;

@@ -49,6 +49,13 @@ export type {
   ThinkingLevelChangedEvent,
 } from './chat.ts';
 export { PRODUCT_HISTORY_SCHEMA_VERSION } from './chat.ts';
+export {
+  parseSubagentDelegations,
+  type SubagentDelegation,
+  type SubagentName,
+  type SubagentStatus,
+  type SubagentUsage,
+} from './subagent.ts';
 export type {
   AvailableModel,
   ProviderCredential,

@@ -160,6 +160,7 @@ export function makeFakeHub(): { hub: AgentHubAdapter; sessions: FakeSession[] }
     }),
     archiveSession: vi.fn(async () => {}),
     deleteSession: vi.fn(async () => {}),
+    deleteChildSessions: vi.fn(async () => {}),
   };
   return { hub, sessions };
 }

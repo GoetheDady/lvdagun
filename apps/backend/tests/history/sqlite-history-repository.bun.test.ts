@@ -82,4 +82,79 @@ describe('SqliteHistoryRepository', () => {
     expect(history.needsLegacySessionCutover()).toBe(false);
     repository.close();
   });
+
+  test('委派子会话按引用计数级联', () => {
+    const repository = new SqliteHistoryRepository(':memory:');
+    const history = new ProductHistory(repository);
+    history.initialize();
+    history.beginCreate('session-a', 1);
+    history.completeCreate('session-a', 'pi-a');
+    history.acceptPrompt('session-a', '问题');
+    history.commit('session-a', (session) => {
+      const run = session.branches[0]!.runs[0]!;
+      run.status = 'completed';
+      run.items.push({
+        type: 'tool_result',
+        itemId: 'tool-a',
+        runId: run.runId,
+        createdAt: 2,
+        toolCallId: 'call-a',
+        toolName: 'delegate',
+        args: {},
+        content: [{ type: 'text', text: '' }],
+        isError: false,
+        delegations: [
+          {
+            id: 'child-1',
+            agent: 'scout',
+            task: '调查',
+            status: 'success',
+            childSessionId: 'child-1',
+            result: null,
+            usage: null,
+            error: null,
+            steps: 1,
+            activity: null,
+            startedAt: 1,
+            endedAt: 2,
+          },
+          {
+            id: 'child-2',
+            agent: 'worker',
+            task: '执行',
+            status: 'success',
+            childSessionId: 'child-2',
+            result: null,
+            usage: null,
+            error: null,
+            steps: 1,
+            activity: null,
+            startedAt: 1,
+            endedAt: 2,
+          },
+        ],
+      });
+    });
+
+    // 分叉会话复制委派投影,共享 child-1。
+    history.beginCreate('session-fork', 2);
+    history.completeCreate('session-fork', 'pi-fork');
+    history.copyForkHistory('session-fork', 'session-a', history.getSnapshot('session-a').runs[0]!.runId);
+
+    expect(history.collectChildSessionIds('session-a')).toEqual(['child-1', 'child-2']);
+    // 删除前:两个子会话都被引用,没有可级联删除的孤儿。
+    expect(history.filterUnreferencedChildSessionIds(history.collectChildSessionIds('session-a'))).toEqual([]);
+
+    history.finishDelete('session-a');
+    // 分叉会话复制了整张委派卡片,全部子会话仍被引用,没有可级联删除的孤儿。
+    expect(history.filterUnreferencedChildSessionIds(['child-1', 'child-2'])).toEqual([]);
+
+    history.finishDelete('session-fork');
+    // 分叉会话也删除后,全部子会话失去引用,才能级联清理。
+    expect(history.filterUnreferencedChildSessionIds(['child-1', 'child-2'])).toEqual([
+      'child-1',
+      'child-2',
+    ]);
+    repository.close();
+  });
 });

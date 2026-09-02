@@ -19,6 +19,7 @@
     "@juicesharp/rpiv-todo": "2.6.4",
     "@lvdagun/protocol": "workspace:*",
     "express": "^5.1.0",
+    "typebox": "1.3.7",
     "ws": "^8.21.3"
   },
   "devDependencies": {

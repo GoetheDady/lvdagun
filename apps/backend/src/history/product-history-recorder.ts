@@ -6,8 +6,9 @@ import type {
   ProductAssistantSegmentItem,
   ProductCompactionItem,
   ProductRetryItem,
-  ProductToolDraft,
-} from '@lvdagun/protocol';
+        ProductToolDraft,
+      } from '@lvdagun/protocol';
+import { parseSubagentDelegations } from '@lvdagun/protocol';
 
 import {
   isProductStateEvent,
@@ -259,13 +260,18 @@ export class ProductHistoryRecorder {
         message.toolName === 'todo' && !message.isError
           ? projectTodoDetails(message.details)
           : undefined;
+      const delegations =
+        message.toolName === 'delegate'
+          ? (parseSubagentDelegations(message.details) ?? undefined)
+          : undefined;
       const result = mapPiToolResult(
         message,
         { itemId, runId: run.runId },
         this.findToolArgs(productToolCallId),
         productToolCallId,
         (mimeType, data) => this.history.putBlob(this.sessionId, mimeType, data),
-        executionPlan
+        executionPlan,
+        delegations
       );
       this.updateRun((activeRun) => activeRun.items.push(result));
       this.history.savePiToolCallReference(this.sessionId, itemId, message.toolCallId);

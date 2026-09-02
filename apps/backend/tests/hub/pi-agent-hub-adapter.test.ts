@@ -472,7 +472,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
   it('启用 Pi 默认工具和 Todo 并关闭范围外资源', async () => {
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await hub.createSession({ providers: [{ provider: 'anthropic', apiKey: '' }], defaultModel: { provider: 'anthropic', id: 'claude-a' } });
-    expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write', 'todo']);
+    expect(pi.state.activeTools).toEqual(['read', 'bash', 'edit', 'write', 'todo', 'delegate']);
     expect(pi.state.resourceLoaderOptions).toMatchObject({
       noExtensions: true,
       noSkills: true,
@@ -484,6 +484,7 @@ describe('createPiAgentHubAdapter 会话能力', () => {
       expect.objectContaining({ name: 'lvdagun-pending-messages', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-session-execution-plan', hidden: true }),
       expect.objectContaining({ name: 'lvdagun-auto-session-title', hidden: true }),
+      expect.objectContaining({ name: 'lvdagun-subagent', hidden: true }),
     ]);
     // 懒持久化：创建会话不再预写 JSONL，文件由首条消息触发落盘。
     expect(pi.state.persistedFiles).toEqual([]);

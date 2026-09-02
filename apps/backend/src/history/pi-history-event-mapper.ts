@@ -5,6 +5,7 @@ import type {
   ProductAssistantSegmentItem,
   ProductToolResultItem,
   SessionExecutionPlan,
+  SubagentDelegation,
 } from '@lvdagun/protocol';
 
 /** @param message - Pi 消息 @returns 用户纯文本；非用户消息返回空字符串 */
@@ -62,6 +63,8 @@ export function mapPiAssistantSegment(
  * @param args - 对应工具调用参数
  * @param toolCallId - 产品工具调用标识
  * @param storeBlob - 图片 BLOB 写入函数
+ * @param executionPlan - Todo 工具的会话执行计划投影
+ * @param delegations - 委派工具的子 Agent 投影
  * @returns 不含 Base64 图片的产品工具结果
  */
 export function mapPiToolResult(
@@ -70,7 +73,8 @@ export function mapPiToolResult(
   args: unknown,
   toolCallId: string,
   storeBlob: (mimeType: string, data: Uint8Array) => string,
-  executionPlan?: SessionExecutionPlan | null
+  executionPlan?: SessionExecutionPlan | null,
+  delegations?: SubagentDelegation[]
 ): ProductToolResultItem {
   return {
     type: 'tool_result',
@@ -90,6 +94,7 @@ export function mapPiToolResult(
     ),
     isError: message.isError,
     ...(message.toolName === 'todo' && executionPlan !== undefined ? { executionPlan } : {}),
+    ...(message.toolName === 'delegate' && delegations !== undefined ? { delegations } : {}),
   };
 }
 

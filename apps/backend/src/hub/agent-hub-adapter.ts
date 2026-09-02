@@ -326,4 +326,12 @@ export interface AgentHubAdapter {
    * @throws 会话已归档、会话不存在或文件删除失败
    */
   deleteSession(sessionId: string): Promise<void>;
+
+  /**
+   * 永久删除指定子会话(委派产生的内嵌子 Agent 会话)文件。
+   *
+   * @param sessionIds - 子会话标识列表
+   * @returns 存在的子会话文件全部删除后解决的 Promise;不存在的 id 静默跳过
+   */
+  deleteChildSessions(sessionIds: string[]): Promise<void>;
 }
