@@ -21,6 +21,8 @@ interface ModelSelectorProps {
   className?: string;
   /** 自定义触发器内容;缺省为模型名 + 切换箭头 */
   triggerChildren?: React.ReactNode;
+  /** 选择或取消后接回焦点的元素(通常是输入框);缺省时保留浮层默认的焦点归还 */
+  restoreFocusTo?: React.RefObject<HTMLElement | null>;
   /** @param model - 用户选择的跨 Provider 模型引用 */
   onSelect(model: ModelReference): void;
 }
@@ -88,7 +90,15 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
           side="top"
           align="end"
           sideOffset={8}
-          className="z-50 w-80 rounded-md border border-border bg-popover text-popover-foreground shadow-md outline-none"
+          className="z-50 w-80 rounded-md border border-border bg-popover text-popover-foreground shadow-md outline-none motion-reduce:animate-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1"
+          // 焦点必须与关闭同帧回到输入区:浮层一关，focus-within 与“内部浮层打开”两个
+          // 展开条件同帧失效，空出一帧输入区就会先闪一下收缩再展开。Radix 的
+          // onCloseAutoFocus 晚一帧才执行，因此在选中/取消时当场接回
+          onEscapeKeyDown={() => props.restoreFocusTo?.current?.focus()}
+          // 有接回目标时不让 Radix 再把焦点还给触发器，晚一帧的默认接管会把光标拉回工具行
+          onCloseAutoFocus={(event) => {
+            if (props.restoreFocusTo) event.preventDefault();
+          }}
         >
           <div className="relative border-b border-border p-2">
             <Search className="absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -121,6 +131,7 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
                         className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
                         onClick={() => {
                           props.onSelect({ provider: model.provider, id: model.id });
+                          props.restoreFocusTo?.current?.focus();
                           handleOpenChange(false);
                         }}
                       >

@@ -39,9 +39,11 @@ vi.mock('@/services/session-events', () => ({
 }));
 
 // 会话列表走真实订阅路径：初始快照复用已 mock 的 api.listSessions
-vi.mock('@/services/rpc-client', async () => (await import('../services/rpc-client-mock')).rpcClientMockFactory());
+vi.mock('@/services/rpc-client', async () =>
+  (await import('../services/rpc-client-mock')).rpcClientMockFactory()
+);
 
-const state: AgentSessionState = {
+const defaultState: AgentSessionState = {
   sessionName: null,
   executionAvailable: true,
   isRunning: false,
@@ -53,6 +55,9 @@ const state: AgentSessionState = {
   availableModels: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt', name: 'GPT' }],
   modelWarning: null,
 };
+
+// 个别用例需要不同的会话状态（多模型、正在运行），订阅快照读取共享变量
+let state: AgentSessionState = defaultState;
 
 /** @returns 含重试和多个模型片段的产品历史 */
 function history(): ProductSessionHistory {
@@ -186,6 +191,7 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  state = defaultState;
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn() },
@@ -229,6 +235,42 @@ describe('ChatPage 产品历史投影', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByPlaceholderText('输入消息')).toHaveFocus());
+  });
+
+  it('切换模型期间只让模型按钮忙碌，思考强度滑块不变灰', async () => {
+    const user = userEvent.setup();
+    const second = { provider: 'openai', providerName: 'OpenAI', id: 'gpt-2', name: 'GPT-2' };
+    state = { ...defaultState, availableModels: [...defaultState.availableModels, second] };
+    let finishSwitch!: (session: AgentSessionState) => void;
+    vi.mocked(api.setSessionModel).mockReturnValue(
+      new Promise<AgentSessionState>((resolve) => {
+        finishSwitch = resolve;
+      })
+    );
+    renderPage();
+
+    const slider = await screen.findByRole('slider', { name: '思考等级' });
+    await user.click(screen.getByRole('button', { name: '模型 GPT' }));
+    await user.click(await screen.findByRole('option', { name: /GPT-2/ }));
+
+    // 切换还在进行（模型按钮转圈），此时滑块必须保持可用外观，不能连带 50% 变灰
+    expect(
+      screen.getByRole('button', { name: '模型 GPT' }).querySelector('.lucide-loader-circle')
+    ).not.toBeNull();
+    expect(slider).toHaveAttribute('aria-disabled', 'false');
+    await act(async () => finishSwitch({ ...defaultState, model: second }));
+  });
+
+  it('在模型浮层里选完模型后把焦点还给输入框，输入区不因失焦收起', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const textarea = await screen.findByPlaceholderText('输入消息');
+    await waitFor(() => expect(textarea).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: '模型 GPT' }));
+    await user.click(await screen.findByRole('option', { name: /GPT/ }));
+
+    expect(textarea).toHaveFocus();
   });
 
   it('提交后在运行记录到达前立即显示运行标记', async () => {

@@ -349,14 +349,17 @@ function ChatWorkspace({
                       editing !== null
                     }
                     loading={state.settingModel}
+                    restoreFocusTo={textareaRef}
                     onSelect={(model) => void setModel(model)}
                   />
-                  {/* 模型切换时重建 Slider，避免旧模型预览覆盖新模型的权威状态。 */}
+                  {/* 模型切换时重建 Slider，避免旧模型预览覆盖新模型的权威状态。
+                      不禁用滑块：Radix 的 disabled 是整条 50% 变灰，模型往返一次就闪一次；
+                      期间的提交由 setThinkingLevel 的 settingModel 守卫和 RPC 等级校验拦住。 */}
                   <ThinkingLevelSlider
                     key={`${state.session.model.provider}:${state.session.model.id}`}
                     value={state.session.thinkingLevel}
                     levels={state.session.availableThinkingLevels}
-                    disabled={!canAct || state.isRunning || state.settingModel || editing !== null}
+                    disabled={!canAct || state.isRunning || editing !== null}
                     loading={state.settingThinkingLevel}
                     onCommit={setThinkingLevel}
                   />

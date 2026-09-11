@@ -189,6 +189,7 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
                   models={availableModels}
                   disabled={creating}
                   loading={false}
+                  restoreFocusTo={textareaRef}
                   onSelect={(model) =>
                     setSelectedModel(
                       availableModels.find(
