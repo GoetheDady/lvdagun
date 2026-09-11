@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentSessionState, AgentStreamEvent, ProductSessionHistory } from '@lvdagun/protocol';
 
+import ChatLayoutPage from '@/pages/chat-layout-page';
 import ChatPage from '@/pages/chat-page';
 import NewSessionPage from '@/pages/new-session-page';
 import { api } from '@/services/api-client';
@@ -71,13 +72,15 @@ function emptyHistory(sessionId: string): ProductSessionHistory {
   };
 }
 
-/** @returns 草稿页与聊天页共同挂载的路由 */
+/** @returns 草稿页与聊天页共同挂载在常驻外壳下的路由 */
 function renderPage(initialPath = '/sessions/new', chatElement = <ChatPage />): void {
   render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
-        <Route path="/sessions/new" element={<NewSessionPage />} />
-        <Route path="/sessions/:sessionId" element={chatElement} />
+        <Route element={<ChatLayoutPage />}>
+          <Route path="/sessions/new" element={<NewSessionPage />} />
+          <Route path="/sessions/:sessionId" element={chatElement} />
+        </Route>
       </Routes>
     </MemoryRouter>
   );

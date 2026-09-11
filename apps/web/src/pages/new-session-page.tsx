@@ -4,7 +4,6 @@ import { Loader2, Menu, Send } from 'lucide-react';
 
 import type { AvailableModel } from '@lvdagun/protocol';
 
-import { ChatShell } from '@/components/chat/chat-shell';
 import { ModelSelector } from '@/components/chat/model-selector';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +13,7 @@ import {
   COMPOSER_TOOL_ROW_CLASS,
   SUGGESTIONS,
 } from '@/components/chat/composer-constants';
+import { useChatShellContext } from '@/hooks/use-chat-shell-context';
 import { api } from '@/services/api-client';
 
 /**
@@ -224,9 +224,8 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
  * @returns 草稿页
  */
 function NewSessionPage(): React.JSX.Element {
-  return (
-    <ChatShell>{({ onOpenSidebar }) => <DraftWorkspace onOpenSidebar={onOpenSidebar} />}</ChatShell>
-  );
+  const { onOpenSidebar } = useChatShellContext();
+  return <DraftWorkspace onOpenSidebar={onOpenSidebar} />;
 }
 
 export default NewSessionPage;

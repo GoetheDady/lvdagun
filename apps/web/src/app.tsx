@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router';
 
 import type { ModelSettings } from '@lvdagun/protocol';
 
+import ChatLayoutPage from '@/pages/chat-layout-page';
 import ChatPage from '@/pages/chat-page';
 import NewSessionPage from '@/pages/new-session-page';
 import SessionIndexPage from '@/pages/session-index-page';
@@ -30,22 +31,11 @@ function App(): React.JSX.Element {
           </ConfigGuard>
         }
       />
-      <Route
-        path="/sessions/new"
-        element={
-          <ConfigGuard>
-            <NewSessionPage />
-          </ConfigGuard>
-        }
-      />
-      <Route
-        path="/sessions/:sessionId"
-        element={
-          <ConfigGuard>
-            <ChatPage />
-          </ConfigGuard>
-        }
-      />
+      {/* 会话外壳作为 layout 路由常驻:切会话只换子路由,不重拉会话列表 */}
+      <Route element={<ConfigGuard><ChatLayoutPage /></ConfigGuard>}>
+        <Route path="sessions/new" element={<NewSessionPage />} />
+        <Route path="sessions/:sessionId" element={<ChatPage />} />
+      </Route>
       <Route path="/wizard" element={<WizardPage />} />
       {/* 设置页不做未配置守卫:删光 Provider 后要能在设置页里重建配置 */}
       <Route path="/settings" element={<SettingsPage />}>

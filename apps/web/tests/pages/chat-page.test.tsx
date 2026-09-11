@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentSessionState, AgentStreamEvent, ProductSessionHistory } from '@lvdagun/protocol';
 
+import ChatLayoutPage from '@/pages/chat-layout-page';
 import ChatPage from '@/pages/chat-page';
 import { api } from '@/services/api-client';
 
@@ -174,7 +175,9 @@ function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/sessions/session-a']}>
       <Routes>
-        <Route path="/sessions/:sessionId" element={<ChatPage />} />
+        <Route element={<ChatLayoutPage />}>
+          <Route path="/sessions/:sessionId" element={<ChatPage />} />
+        </Route>
       </Routes>
     </MemoryRouter>
   );

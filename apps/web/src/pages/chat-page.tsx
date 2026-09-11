@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { Archive, Loader2, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
 
-import { ChatShell } from '@/components/chat/chat-shell';
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
 import { PendingMessages } from '@/components/chat/pending-messages';
@@ -22,8 +21,9 @@ import {
   selectRunMarker,
   selectSessionTitle,
 } from '@/state/chat-session-selectors';
-import type { SessionUnavailableReason } from '@/state/chat-session-state';
+import { useChatShellContext } from '@/hooks/use-chat-shell-context';
 import type { SessionList } from '@/hooks/use-session-list';
+import type { SessionUnavailableReason } from '@/state/chat-session-state';
 
 /**
  * 把取回文本放在现有草稿之前，并用空行分隔每条消息。
@@ -43,20 +43,17 @@ function prependDraft(texts: string[], draft: string): string {
  */
 function ChatPage(): React.JSX.Element {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { sessionList, onOpenSidebar } = useChatShellContext();
   if (!sessionId) {
     return <Navigate to="/" replace />;
   }
   return (
-    <ChatShell activeSessionId={sessionId}>
-      {({ sessionList, onOpenSidebar }) => (
-        <ChatWorkspace
-          key={sessionId}
-          sessionId={sessionId}
-          sessionList={sessionList}
-          onOpenSidebar={onOpenSidebar}
-        />
-      )}
-    </ChatShell>
+    <ChatWorkspace
+      key={sessionId}
+      sessionId={sessionId}
+      sessionList={sessionList}
+      onOpenSidebar={onOpenSidebar}
+    />
   );
 }
 
