@@ -74,7 +74,7 @@ function SubagentCard({ delegation }: { delegation: SubagentDelegation }): React
           {STATUS_LABELS[delegation.status]}
         </span>
         {running ? (
-          <Spinner className="size-3.5 shrink-0 animate-spin text-soy" />
+          <Spinner className="size-3.5 shrink-0 text-soy" />
         ) : failed || interrupted ? (
           <CircleAlert className="size-3.5 shrink-0" />
         ) : (

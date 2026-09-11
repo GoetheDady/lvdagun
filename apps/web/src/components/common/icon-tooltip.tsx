@@ -5,8 +5,6 @@ interface IconTooltipProps {
   label: string;
   /** 触发提示的控件,通常是图标按钮 */
   children: React.ReactNode;
-  /** 提示相对控件的方位 */
-  side?: 'top' | 'right' | 'bottom' | 'left';
 }
 
 /**
@@ -22,15 +20,15 @@ interface IconTooltipProps {
  * 自带 Provider:Radix 要求 Tooltip 处于 Provider 内,而使用方既有经应用根
  * 渲染的页面也有直接单测渲染的组件,挂到应用根会让后者全部报错
  *
- * @param props - 提示文字、被包裹控件与方位
+ * @param props - 提示文字与被包裹控件
  * @returns 带提示的控件
  */
-export function IconTooltip({ label, children, side }: IconTooltipProps): React.JSX.Element {
+export function IconTooltip({ label, children }: IconTooltipProps): React.JSX.Element {
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>{children}</TooltipTrigger>
-        <TooltipContent side={side}>{label}</TooltipContent>
+        <TooltipContent>{label}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

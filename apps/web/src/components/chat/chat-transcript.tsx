@@ -686,7 +686,7 @@ export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
   if (props.loading) {
     return (
       <div className="flex min-h-40 items-center justify-center">
-        <Spinner className="size-5 animate-spin" />
+        <Spinner className="size-5" />
       </div>
     );
   }

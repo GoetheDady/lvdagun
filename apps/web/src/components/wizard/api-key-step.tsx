@@ -64,7 +64,7 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
           disabled={props.testing || props.apiKey.trim() === ''}
           onClick={props.onTest}
         >
-          {props.testing ? <Spinner className="size-4 animate-spin" /> : null}
+          {props.testing ? <Spinner className="size-4" /> : null}
           测试连接
         </Button>
         <Button
@@ -72,7 +72,7 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
           disabled={props.saving || props.testResult === null || !props.testResult.ok}
           onClick={props.onFinish}
         >
-          {props.saving ? <Spinner className="size-4 animate-spin" /> : null}
+          {props.saving ? <Spinner className="size-4" /> : null}
           完成
         </Button>
       </div>
