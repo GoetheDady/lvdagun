@@ -51,7 +51,9 @@
 | 技能 | 用途 |
 | --- | --- |
 | claude-handoff | 把当前对话交接给一个新的后台 agent 立即接手 |
+| implement-spec | 在单个分支上实现整份 spec:把 tickets 当任务图跑,并发子代理推进就绪前沿,最终落成单个 PR |
 | loop-me | 拷问式梳理你想构建的工作流规范 |
+| retro | 会话复盘:给出对 agent 环境(steering 文件、代码规范、自动化检查、工具)的改进建议(上游标注为 STUB,尚未可用) |
 | setup-ts-deep-modules | 接入 dependency-cruiser,让每个包成为深模块(实现藏在子目录,只能从入口文件访问) |
 | writing-beats | 写作·成型:把原材料组装成有节奏的旅程 |
 | writing-fragments | 写作·探索:挖掘原始片段,尚无结构 |
