@@ -28,8 +28,9 @@ export function SearchableList(props: SearchableListProps): React.JSX.Element {
   return (
     <Command shouldFilter loop label={props.placeholder}>
       <CommandInput placeholder={props.placeholder} />
-      {/* label 要挂在 List 上:cmdk 的 Root label 给输入框命名,列表名用自己的 */}
-      <CommandList label={props.placeholder} className="max-h-72">
+      {/* label 要挂在 List 上:cmdk 的 Root label 给输入框命名,列表名用自己的;
+          mt-2 是输入框与列表之间的缝:上游 wrapper 是 pb-0,不留缝时首个候选被高亮会贴着输入框边框 */}
+      <CommandList label={props.placeholder} className="mt-2 max-h-72">
         {props.items === null ? (
           <CommandEmpty>{props.loadingText}</CommandEmpty>
         ) : (
