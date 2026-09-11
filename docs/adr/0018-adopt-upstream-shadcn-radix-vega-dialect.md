@@ -9,6 +9,7 @@
 - **`components/ui/` 是生成物,豁免 AGENTS.md 的 JSDoc 要求。** 该目录由 CLI 生成,补全中文 JSDoc 会因为下次 `shadcn add` 而全部丢失。AGENTS.md 的注释规范只管 `components/chat/`、`components/common/`、`components/wizard/`、`pages/` 这些自写代码。
 - **生成物允许局部扩展,但必须在本文记账。** 目前只有一处:`slider.tsx` 的 `thumbProps`。滑块是 Slider 内唯一可聚焦元素,可访问名与值文本只能挂在它上面,而 Radix 不会把 Root 的无障碍属性下发给 Thumb;`chat-page` 的测试按 `role="slider"` + name「思考等级」断言,是该能力的验收依据。重新运行 CLI 覆盖后需要重新补回这一处。
 - **`cn` 必须指向项目自己的 `@/utils/class-names`。** shadcn CLI 把 registry 声明的 `cn` 当作 npm 依赖,会装进一个同名的命令行工具(`cn@0.2.6`,带 bin)并把生成代码的 import 指向它;那不是 `clsx + twMerge`,`Tailwind` 冲突类不会合并。每次 `add` 之后都要检查并改回。
+- **`add` 会把作用域 Radix 包装回直接依赖。** CLI 按 registry 声明写入 `@radix-ui/react-<组件>`,但这些包已由统一包 `radix-ui` 传递提供,再声明一遍属冗余 —— 它们曾是本文件的否决方案残留,后经 `bun remove` 清掉。每次 `add` 之后与 `cn` 一并复查 `apps/web/package.json` 的直接依赖。
 - **`shadcn` 是 devDependency。** 存在的唯一理由是被 `main.css` 以 `@import 'shadcn/tailwind.css'` 引用;`@utility` 按需输出,未使用的 scroll-fade/shimmer 不产生任何产物。
 - **接受上游的视觉默认值,不做本地覆盖。** 包括按钮按下时下沉 1px、焦点环 `ring-3`,以及 `destructive` 变体的淡红底红字。`session-sidebar` 的删除确认按钮因此不再是实心红——保持与上游一致优先于单点强调。
 

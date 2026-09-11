@@ -1,4 +1,4 @@
-/** @file 客户端普通 HTTP 请求的唯一入口 */
+/** @file 客户端 JSON-RPC 调用门面 */
 import {
   type AbortSessionResult,
   type AgentSessionState,
