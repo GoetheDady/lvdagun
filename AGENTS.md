@@ -26,6 +26,7 @@
 ## 代码规范
 
 - 注释用中文;函数与组件写完整 JSDoc(@param、@returns、@throws 按需)
+- `apps/web/src/components/ui/` 是 shadcn registry 的生成物,豁免上一条注释要求(补全也会被下次 `shadcn add` 冲掉);局部扩展见 `docs/adr/0018-adopt-upstream-shadcn-radix-vega-dialect.md`
 - 关键逻辑注释写"为什么":这么写的原因、不这么写的后果;简单代码不写注释
 - 自有源码、测试与普通文档的文件名及目录名使用英文小写 kebab-case;生态约定名称(如 `README.md`、`AGENTS.md`、`vite.config.ts`)保持原样
 - TypeScript/JavaScript 标识符遵循语言惯例:组件和类型使用 PascalCase,函数、Hook 与变量使用 camelCase
