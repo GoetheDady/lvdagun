@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { ViewTransition, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 
 import type { ModelSettings } from '@lvdagun/protocol';
@@ -12,6 +12,34 @@ import ModelServicePage from '@/pages/model-service-page';
 import ProviderEditPage from '@/pages/provider-edit-page';
 import WizardPage from '@/pages/wizard-page';
 import { api } from '@/services/api-client';
+
+/**
+ * 路由过渡:只在路由元素挂载/卸载时动画,不做 update 动画——页面内部的状态变化
+ * (流式回复、列表刷新)不该让整页闪一下(`default="none"` 把其他触发类型全关掉)。
+ *
+ * 位置有讲究:React 只在 `<ViewTransition>` 位于被插入/删除子树的顶层时才触发
+ * enter/exit,中间隔一层 DOM 就静默不生效;壳层留在这层,内容区由子路由各自包一层。
+ *
+ * routeKey 是必需的:同一位置、同一组件类型时 React 只做原地更新,边界没被插入或删除,
+ * enter/exit 静默不触发(不报错、不警告,只能实拍发现),所以放进签名里,漏不掉。
+ *
+ * @param routeKey - 这条路由过渡边界的唯一 key
+ * @param element - 该路由的页面元素
+ * @returns 包好的路由元素
+ */
+const shellRoute = (routeKey: string, element: React.ReactNode): React.JSX.Element => (
+  // 整屏换工作台:交叉淡入。全屏元素一移位,看着就是整页在滑,不是换页
+  <ViewTransition key={routeKey} enter="vt-shell" exit="vt-shell" default="none">
+    {element}
+  </ViewTransition>
+);
+
+/** @see shellRoute - 同一层包装,壳层内换内容区时用淡入加轻微上移 */
+const contentRoute = (routeKey: string, element: React.ReactNode): React.JSX.Element => (
+  <ViewTransition key={routeKey} enter="vt-content" exit="vt-content" default="none">
+    {element}
+  </ViewTransition>
+);
 
 /**
  * 应用根组件:路由表 + 首次访问守卫。
@@ -32,18 +60,31 @@ function App(): React.JSX.Element {
         }
       />
       {/* 会话外壳作为 layout 路由常驻:切会话只换子路由,不重拉会话列表 */}
-      <Route element={<ConfigGuard><ChatLayoutPage /></ConfigGuard>}>
-        <Route path="sessions/new" element={<NewSessionPage />} />
-        <Route path="sessions/:sessionId" element={<ChatPage />} />
+      <Route
+        element={shellRoute(
+          'chat',
+          <ConfigGuard>
+            <ChatLayoutPage />
+          </ConfigGuard>
+        )}
+      >
+        <Route path="sessions/new" element={contentRoute('sessions-new', <NewSessionPage />)} />
+        <Route path="sessions/:sessionId" element={contentRoute('sessions-id', <ChatPage />)} />
       </Route>
-      <Route path="/wizard" element={<WizardPage />} />
+      <Route path="/wizard" element={shellRoute('wizard', <WizardPage />)} />
       {/* 设置页不做未配置守卫:删光 Provider 后要能在设置页里重建配置 */}
-      <Route path="/settings" element={<SettingsPage />}>
+      <Route path="/settings" element={shellRoute('settings', <SettingsPage />)}>
         <Route index element={<Navigate to="model" replace />} />
-        <Route path="model" element={<ModelServicePage />} />
-        <Route path="model/new" element={<ProviderEditPage />} />
-        <Route path="model/:providerId" element={<ProviderEditPage />} />
-        <Route path="about" element={<AboutPanel />} />
+        <Route path="model" element={contentRoute('settings-model', <ModelServicePage />)} />
+        <Route
+          path="model/new"
+          element={contentRoute('settings-model-new', <ProviderEditPage />)}
+        />
+        <Route
+          path="model/:providerId"
+          element={contentRoute('settings-model-edit', <ProviderEditPage />)}
+        />
+        <Route path="about" element={contentRoute('settings-about', <AboutPanel />)} />
       </Route>
     </Routes>
   );

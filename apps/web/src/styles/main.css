@@ -199,3 +199,55 @@ body,
     }
   }
 }
+
+/* 页面过渡:类名由 app.tsx 的 RouteTransition 传给 React 19.3 的 <ViewTransition>。
+   进比出慢一点,旧内容先退净再让新内容淡入,避免两页在米纸底色上糊成一团;
+   整屏换工作台只做交叉淡入——全屏元素一移位,看着就是整页在滑,不是换页 */
+::view-transition-old(.vt-shell) {
+  animation: 180ms ease-out both vt-fade-out;
+}
+::view-transition-new(.vt-shell) {
+  animation: 220ms ease-out both vt-fade-in;
+}
+::view-transition-old(.vt-content) {
+  animation: 160ms ease-out both vt-fade-out;
+}
+::view-transition-new(.vt-content) {
+  animation: 220ms ease-out both vt-rise-in;
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-rise-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+/* 上面那条 prefers-reduced-motion 压的是元素上的 transition/animation,
+   ::view-transition-* 是伪元素,规则匹配不到,得单独关一次;
+   类名分支也列一遍,不赌 `*` 能同时匹配带 view-transition-class 的那类伪元素 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(.vt-shell),
+  ::view-transition-old(.vt-shell),
+  ::view-transition-new(.vt-shell),
+  ::view-transition-group(.vt-content),
+  ::view-transition-old(.vt-content),
+  ::view-transition-new(.vt-content) {
+    animation: none !important;
+  }
+}
