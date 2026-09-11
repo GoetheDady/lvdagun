@@ -44,7 +44,9 @@ export function SearchableList(props: SearchableListProps): React.JSX.Element {
                 data-checked={props.selectedId === item.id}
                 onSelect={() => props.onSelect(item.id)}
               >
-                <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                {/* id 贴着名字,不用 flex-1 推到行尾:候选行宽(与触发器同宽)时
+                    名字与 id 会相隔几百像素,眼睛要在两端来回找 */}
+                <span className="min-w-0 truncate">{item.name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">{item.id}</span>
               </CommandItem>
             ))}

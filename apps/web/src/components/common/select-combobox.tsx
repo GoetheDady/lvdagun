@@ -60,8 +60,12 @@ export function SelectCombobox(props: SelectComboboxProps): React.JSX.Element {
           <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      {/* 浮层与触发器同宽:候选项名长短不一,浮层宽度跟着控件走比固定宽度更像原生下拉 */}
-      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) gap-0 p-0">
+      {/* 浮层与触发器同宽,但封顶:触发器是整行表单控件(约 600px),不封顶时浮层会
+          与卡片边框叠成一圈双线,看起来像卡片里又套了一个框 */}
+      <PopoverContent
+        align="start"
+        className="w-(--radix-popover-trigger-width) max-w-md gap-0 p-0"
+      >
         <SearchableList
           placeholder={props.searchPlaceholder}
           items={props.items}
