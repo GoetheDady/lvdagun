@@ -157,7 +157,7 @@ function ModelServicePage(): React.JSX.Element {
         {settings && settings.providers.length > 0 ? (
           <Link to="/settings/model/new" className={buttonVariants({ size: 'sm' })}>
             <Plus />
-            新建
+            添加服务商
           </Link>
         ) : null}
       </div>
@@ -243,7 +243,7 @@ function ModelServicePage(): React.JSX.Element {
               <EmptyContent className="max-w-none">
                 <Link to="/settings/model/new" className={buttonVariants({ size: 'sm' })}>
                   <Plus />
-                  新建模型服务
+                  添加服务商
                 </Link>
               </EmptyContent>
             </Empty>

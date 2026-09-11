@@ -9,9 +9,9 @@ import type {
   TestConnectionResult,
 } from '@lvdagun/protocol';
 
-import { SearchableList } from '@/components/common/searchable-list';
+import { SelectCombobox } from '@/components/common/select-combobox';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { api } from '@/services/api-client';
@@ -104,20 +104,20 @@ function ProviderEditPage(): React.JSX.Element {
       {/* 页头:登记单标题,与列表页同构 */}
       <div className="space-y-1.5">
         <h1 className="font-display text-2xl font-bold tracking-wide">
-          {isEdit ? `编辑 ${providerName}` : '新建模型服务'}
+          {isEdit ? `编辑 ${providerName}` : '添加服务商'}
         </h1>
         <p className="text-sm text-muted-foreground">
           {isEdit
-            ? '该 Provider 已锁定;想更换请删除后重新新建。'
-            : '选择服务商、填 API Key、测试模型,登记完即可使用。'}
+            ? '该服务商已锁定;想更换请删除后重新添加。'
+            : '选择服务商、填入 API Key,登记后它名下的模型全部可用。'}
         </p>
       </div>
 
       <Card>
-        <CardContent className="space-y-5 p-6">
+        <CardContent className="gap-5">
           {isEdit ? (
             <Field>
-              <FieldLabel>Provider</FieldLabel>
+              <FieldLabel>服务商</FieldLabel>
               {/* 编辑态:服务商锁定,米黄底只读展示,与可编辑字段区分 */}
               <div className="flex items-baseline gap-2 rounded-md border bg-muted/40 px-3 py-2">
                 <p className="text-sm font-medium">{providerName}</p>
@@ -126,9 +126,12 @@ function ProviderEditPage(): React.JSX.Element {
             </Field>
           ) : (
             <Field>
-              <FieldLabel htmlFor="provider-select">Provider</FieldLabel>
-              <SearchableList
-                placeholder="搜索服务商…"
+              <FieldLabel htmlFor="provider-select">服务商</FieldLabel>
+              <SelectCombobox
+                id="provider-select"
+                label="服务商"
+                placeholder="选择服务商"
+                searchPlaceholder="搜索服务商…"
                 items={providers}
                 selectedId={provider}
                 loadingText="加载中…"
@@ -158,45 +161,62 @@ function ProviderEditPage(): React.JSX.Element {
             <FieldError id={API_KEY_ERROR_ID}>{apiKeyError}</FieldError>
           </Field>
 
-          <Field>
-            <FieldLabel>测试模型</FieldLabel>
-            <SearchableList
-              placeholder="搜索模型…"
-              items={models}
-              selectedId={testModelId}
-              loadingText={provider ? '加载中…' : '先选择 Provider'}
-              emptyText="没有可用模型"
-              onSelect={setTestModelId}
-            />
-          </Field>
-
-          {testResult?.ok ? (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="inline-flex shrink-0 items-center rounded-[4px] bg-primary px-1.5 py-0.5 font-display text-xs font-bold text-primary-foreground">
-                验讫
-              </span>
-              <span className="text-primary">连接成功</span>
+          {/* 验证分区:所选模型只是本次验证的载体、不随凭据保存,所以与上面的凭据字段分开陈列;
+              米黄匾额材质与列表页的招牌同源,「验讫」章盖在它自己所属的分区上 */}
+          <div className="rounded-md border border-border bg-secondary/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-display text-sm font-bold tracking-wide">验证</p>
+              {testResult?.ok ? (
+                <div className="flex shrink-0 items-center gap-1.5 text-xs text-primary">
+                  {/* 章与旁边的文字说的是同一件事,读屏只念一次即可 */}
+                  <span
+                    aria-hidden="true"
+                    className="rounded-[4px] bg-primary px-1.5 py-0.5 font-display text-xs font-bold text-primary-foreground"
+                  >
+                    验讫
+                  </span>
+                  连接成功
+                </div>
+              ) : null}
             </div>
-          ) : null}
-
-          <div className="flex items-center gap-2 border-t pt-4">
-            <Button
-              variant="outline"
-              disabled={!provider || !testModelId || testing}
-              onClick={() => void handleTest()}
-            >
-              {testing ? '测试中…' : '测试连接'}
-            </Button>
-            <div className="flex-1" />
-            <Button variant="ghost" onClick={() => navigate('/settings/model')}>
-              <ChevronLeft />
-              取消
-            </Button>
-            <Button disabled={!provider || saving} onClick={() => void handleSave()}>
-              {saving ? '保存中…' : '保存'}
-            </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              所选模型只用于本次验证,不随凭据保存。
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <SelectCombobox
+                className="flex-1"
+                label="测试模型"
+                placeholder="选择测试模型"
+                searchPlaceholder="搜索模型…"
+                items={models}
+                selectedId={testModelId}
+                disabled={!provider}
+                loadingText={provider ? '加载中…' : '先选择服务商'}
+                emptyText="没有可用模型"
+                onSelect={setTestModelId}
+              />
+              <Button
+                variant="outline"
+                disabled={!provider || !testModelId || testing}
+                onClick={() => void handleTest()}
+              >
+                {testing ? '测试中…' : '测试连接'}
+              </Button>
+            </div>
           </div>
         </CardContent>
+
+        {/* 页脚只留导航与提交:测试连接属于验证,不混进这里 */}
+        <CardFooter className="border-t">
+          <Button variant="ghost" onClick={() => navigate('/settings/model')}>
+            <ChevronLeft />
+            取消
+          </Button>
+          <div className="flex-1" />
+          <Button disabled={!provider || saving} onClick={() => void handleSave()}>
+            {saving ? '保存中…' : '保存'}
+          </Button>
+        </CardFooter>
       </Card>
     </div>
   );

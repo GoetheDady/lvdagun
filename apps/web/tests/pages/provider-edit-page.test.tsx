@@ -46,9 +46,10 @@ describe('ProviderEditPage', () => {
   it('新建:选 Provider 后可保存,空 Key 存空串', async () => {
     renderPage('/settings/model/new');
 
-    await screen.findByText('OpenAI');
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
-    await userEvent.click(screen.getByText('OpenAI'));
+    // 服务商列表收在浮层里:先展开再选
+    await userEvent.click(screen.getByRole('button', { name: '服务商:选择服务商' }));
+    await userEvent.click(await screen.findByRole('option', { name: /OpenAI/ }));
 
     await userEvent.click(screen.getByRole('button', { name: '保存' }));
 
@@ -64,8 +65,8 @@ describe('ProviderEditPage', () => {
     renderPage('/settings/model/deepseek');
 
     await screen.findByText('编辑 DeepSeek');
-    // Provider 不出现可编辑列表
-    expect(screen.queryByText('搜索服务商…')).not.toBeInTheDocument();
+    // Provider 不出现可编辑控件
+    expect(screen.queryByRole('button', { name: /^服务商:/ })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '保存' }));
 
@@ -102,13 +103,26 @@ describe('ProviderEditPage', () => {
   it('测试模型列表随 Provider 加载,首个模型默认选中', async () => {
     renderPage('/settings/model/deepseek');
 
+    await userEvent.click(await screen.findByRole('button', { name: /^测试模型:/ }));
     const selected = await screen.findByRole('option', { name: /DeepSeek V4/ });
     expect(selected).toHaveAttribute('data-checked', 'true');
+  });
+
+  it('测试通过后在验证分区盖验讫章', async () => {
+    vi.mocked(api.testConnection).mockResolvedValue({ ok: true });
+    renderPage('/settings/model/deepseek');
+    await screen.findByText('编辑 DeepSeek');
+
+    await userEvent.click(screen.getByRole('button', { name: '测试连接' }));
+
+    await screen.findByText('连接成功');
+    expect(screen.getByText('验讫')).toBeInTheDocument();
   });
 
   it('服务商列表支持方向键导航并回车选中', async () => {
     renderPage('/settings/model/new');
 
+    await userEvent.click(screen.getByRole('button', { name: '服务商:选择服务商' }));
     const listbox = await screen.findByRole('listbox', { name: '搜索服务商…' });
     expect(listbox).toBeInTheDocument();
     await userEvent.click(screen.getByPlaceholderText('搜索服务商…'));
