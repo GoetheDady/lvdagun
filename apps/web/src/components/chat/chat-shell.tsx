@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useDefaultLayout } from 'react-resizable-panels';
 
 import { SessionSidebar } from '@/components/chat/session-sidebar';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { type SessionList, useSessionList } from '@/hooks/use-session-list';
 import { useHubConnection } from '@/hooks/use-hub-connection';
@@ -39,6 +40,9 @@ export function ChatShell({ activeSessionId, children }: ChatShellProps): React.
   const hubConnection = useHubConnection();
   const isWide = useMediaQuery('(min-width: 48rem)');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // 唤出按钮住在工作区内(经 context 回调触发),不在本组件树下,
+  // 因此拿不到 SheetTrigger,焦点归还必须自己记
+  const drawerTriggerRef = useRef<HTMLElement | null>(null);
   const persistedLayout = useDefaultLayout({
     id: CHAT_LAYOUT_ID,
     panelIds: ['session-sidebar', 'chat-workspace'],
@@ -88,16 +92,6 @@ export function ChatShell({ activeSessionId, children }: ChatShellProps): React.
     onSettings: () => navigate('/settings'),
   };
 
-  // 抽屉打开时允许 Escape 关闭,与背景点击一起构成对话框的基本退出方式。
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setDrawerOpen(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [drawerOpen]);
-
   const context: ChatShellContext = {
     sessionList,
     onOpenSidebar: isWide ? undefined : () => setDrawerOpen(true),
@@ -107,24 +101,28 @@ export function ChatShell({ activeSessionId, children }: ChatShellProps): React.
     return (
       <main className="flex h-dvh min-h-[32rem] overflow-hidden bg-background">
         {children(context)}
-        {drawerOpen ? (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="会话列表"
-            className="fixed inset-0 z-50"
+        {/* 抽屉用对话框基元而非固定定位层:焦点被限制在抽屉内,背景不可滚动,
+            Escape 与遮罩点击由基元处理。手写层只做到了“看起来像对话框” */}
+        <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+          <SheetContent
+            side="left"
+            showCloseButton={false}
+            className="w-72 max-w-[85%] gap-0 bg-sidebar p-0"
+            // 记下唤出按钮:基元即将把焦点移进面板,此刻它仍是当前焦点元素
+            onOpenAutoFocus={() => {
+              drawerTriggerRef.current = document.activeElement as HTMLElement | null;
+            }}
+            // 没有 SheetTrigger 时基元不会归还焦点,关闭后焦点会掉到 body,
+            // 键盘用户下次 Tab 从页首重新开始;手动交还给唤出按钮
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              drawerTriggerRef.current?.focus();
+            }}
           >
-            <button
-              type="button"
-              aria-label="关闭会话列表"
-              className="absolute inset-0 cursor-default bg-black/40"
-              onClick={() => setDrawerOpen(false)}
-            />
-            <div className="absolute inset-y-0 left-0 w-72 max-w-[85%] bg-sidebar shadow-xl">
-              <SessionSidebar {...sidebarProps} />
-            </div>
-          </div>
-        ) : null}
+            <SheetTitle className="sr-only">会话列表</SheetTitle>
+            <SessionSidebar {...sidebarProps} />
+          </SheetContent>
+        </Sheet>
       </main>
     );
   }

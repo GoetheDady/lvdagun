@@ -3,8 +3,11 @@ import { Check, ChevronLeft, Loader2 } from 'lucide-react';
 import type { TestConnectionResult } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
+import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+/** 连接失败信息与 API Key 输入框的绑定 id。 */
+const API_KEY_ERROR_ID = 'wizard-api-key-error';
 
 interface ApiKeyStepProps {
   provider: string;
@@ -25,26 +28,30 @@ interface ApiKeyStepProps {
  * @returns API Key 步骤元素
  */
 export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
+  // 失败信息归属于 API Key 字段:与输入框用 aria-describedby 双向绑定,
+  // 读屏念到 Key 输入框时会同时读出来
+  const apiKeyError = props.testResult && !props.testResult.ok ? props.testResult.message : null;
   return (
     <>
-      <div className="space-y-2">
-        <Label htmlFor="api-key">{props.provider} 的 API Key</Label>
+      <Field data-invalid={apiKeyError !== null}>
+        <FieldLabel htmlFor="api-key">{props.provider} 的 API Key</FieldLabel>
         <Input
           id="api-key"
           type="password"
           placeholder="sk-…"
+          aria-invalid={apiKeyError !== null}
+          aria-describedby={apiKeyError ? API_KEY_ERROR_ID : undefined}
           value={props.apiKey}
           onChange={(event) => props.onApiKeyChange(event.target.value)}
         />
-      </div>
-      {props.testResult && (
-        <p
-          className={`flex items-center gap-1.5 text-sm ${props.testResult.ok ? 'text-primary' : 'text-destructive'}`}
-        >
-          {props.testResult.ok ? <Check className="size-4" /> : null}
-          {props.testResult.ok ? '连接成功' : props.testResult.message}
+        <FieldError id={API_KEY_ERROR_ID}>{apiKeyError}</FieldError>
+      </Field>
+      {props.testResult?.ok ? (
+        <p className="flex items-center gap-1.5 text-sm text-primary">
+          <Check className="size-4" />
+          连接成功
         </p>
-      )}
+      ) : null}
       <div className="flex gap-2">
         <Button variant="outline" onClick={props.onBack}>
           <ChevronLeft className="size-4" />

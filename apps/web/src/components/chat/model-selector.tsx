@@ -1,11 +1,18 @@
 import { useMemo, useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronsUpDown, Loader2, Search } from 'lucide-react';
+import { ChevronsUpDown, Loader2 } from 'lucide-react';
 
 import type { AvailableModel, ModelReference } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/utils/class-names';
 
 interface ModelSelectorProps {
@@ -30,33 +37,25 @@ interface ModelSelectorProps {
 /**
  * 展示可搜索、按 Provider 分组的会话模型选择器。
  *
+ * 匹配交给 Command(cmdk):手写 listbox 只画了 role=option 却没有方向键导航,
+ * 读屏软件会按 ARIA 契约提示"用方向键浏览",而方向键是死的,比不声明更糟。
+ *
  * @param props - 当前模型、可用模型和切换状态
  * @returns 会话模型选择器
  */
 export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // 只负责按 Provider 分组;名称/id/服务商名的匹配交给 Command 的模糊过滤
   const groups = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    const filtered = normalized
-      ? props.models.filter(
-          (model) =>
-            model.name.toLowerCase().includes(normalized) ||
-            model.id.toLowerCase().includes(normalized) ||
-            model.providerName.toLowerCase().includes(normalized)
-        )
-      : props.models;
     const byProvider = new Map<string, { name: string; models: AvailableModel[] }>();
-    for (const model of filtered) {
-      const group = byProvider.get(model.provider) ?? {
-        name: model.providerName,
-        models: [],
-      };
+    for (const model of props.models) {
+      const group = byProvider.get(model.provider) ?? { name: model.providerName, models: [] };
       group.models.push(model);
       byProvider.set(model.provider, group);
     }
     return [...byProvider.entries()];
-  }, [props.models, query]);
+  }, [props.models]);
 
   /** @param nextOpen - 浮层的下一个开关状态 */
   const handleOpenChange = (nextOpen: boolean): void => {
@@ -64,9 +63,20 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
     if (!nextOpen) setQuery('');
   };
 
+  /**
+   * 选中模型并收起浮层。
+   *
+   * @param model - 用户点选的模型
+   */
+  const handleSelect = (model: AvailableModel): void => {
+    props.onSelect({ provider: model.provider, id: model.id });
+    props.restoreFocusTo?.current?.focus();
+    handleOpenChange(false);
+  };
+
   return (
-    <Popover.Root open={open} onOpenChange={handleOpenChange}>
-      <Popover.Trigger asChild>
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
         <Button
           type="button"
           variant="ghost"
@@ -84,73 +94,55 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
             </>
           )}
         </Button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
-          align="end"
-          sideOffset={8}
-          className="z-50 w-80 rounded-md border border-border bg-popover text-popover-foreground shadow-md outline-none motion-reduce:animate-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-1 data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1"
-          // 焦点必须与关闭同帧回到输入区:浮层一关，focus-within 与“内部浮层打开”两个
-          // 展开条件同帧失效，空出一帧输入区就会先闪一下收缩再展开。Radix 的
-          // onCloseAutoFocus 晚一帧才执行，因此在选中/取消时当场接回
-          onEscapeKeyDown={() => props.restoreFocusTo?.current?.focus()}
-          // 有接回目标时不让 Radix 再把焦点还给触发器，晚一帧的默认接管会把光标拉回工具行
-          onCloseAutoFocus={(event) => {
-            if (props.restoreFocusTo) event.preventDefault();
-          }}
-        >
-          <div className="relative border-b border-border p-2">
-            <Search className="absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              autoFocus
-              value={query}
-              placeholder="搜索模型"
-              className="border-0 bg-muted/60 pl-8 focus-visible:ring-1"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </div>
-          <div role="listbox" aria-label="可用模型" className="max-h-72 overflow-y-auto p-1.5">
-            {groups.length === 0 ? (
-              <p className="px-3 py-8 text-center text-sm text-muted-foreground">没有匹配的模型</p>
-            ) : (
-              groups.map(([provider, group]) => (
-                <div key={provider} role="group" aria-label={group.name}>
-                  <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground">
-                    {group.name}
-                  </p>
-                  {group.models.map((model) => {
-                    const selected =
-                      model.provider === props.value.provider && model.id === props.value.id;
-                    return (
-                      <button
-                        key={`${model.provider}/${model.id}`}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-                        onClick={() => {
-                          props.onSelect({ provider: model.provider, id: model.id });
-                          props.restoreFocusTo?.current?.focus();
-                          handleOpenChange(false);
-                        }}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-foreground">{model.name}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {model.id}
-                          </span>
-                        </span>
-                        {selected ? <Check className="size-4 text-primary" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="end"
+        sideOffset={8}
+        // 命令面板自带内边距,这里清掉让输入框与列表铺满浮层
+        className="w-80 gap-0 p-0"
+        // 焦点必须与关闭同帧回到输入区:浮层一关，focus-within 与“内部浮层打开”两个
+        // 展开条件同帧失效，空出一帧输入区就会先闪一下收缩再展开。Radix 的
+        // onCloseAutoFocus 晚一帧才执行，因此在选中/取消时当场接回
+        onEscapeKeyDown={() => props.restoreFocusTo?.current?.focus()}
+        // 有接回目标时不让 Radix 再把焦点还给触发器，晚一帧的默认接管会把光标拉回工具行
+        onCloseAutoFocus={(event) => {
+          if (props.restoreFocusTo) event.preventDefault();
+        }}
+      >
+        <Command shouldFilter loop label="可用模型">
+          <CommandInput
+            autoFocus
+            placeholder="搜索模型"
+            value={query}
+            onValueChange={setQuery}
+          />
+          <CommandList label="可用模型">
+            <CommandEmpty>没有匹配的模型</CommandEmpty>
+            {groups.map(([provider, group]) => (
+              <CommandGroup key={provider} heading={group.name}>
+                {group.models.map((model) => (
+                  <CommandItem
+                    key={`${model.provider}/${model.id}`}
+                    value={`${model.name} ${model.id} ${model.providerName}`}
+                    data-checked={
+                      model.provider === props.value.provider && model.id === props.value.id
+                    }
+                    onSelect={() => handleSelect(model)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-foreground">{model.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {model.id}
+                      </span>
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

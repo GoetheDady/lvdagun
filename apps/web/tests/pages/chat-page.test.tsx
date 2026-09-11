@@ -273,6 +273,36 @@ describe('ChatPage 产品历史投影', () => {
     expect(textarea).toHaveFocus();
   });
 
+  it('模型浮层能用方向键导航并回车选中', async () => {
+    const user = userEvent.setup();
+    const second = { provider: 'openai', providerName: 'OpenAI', id: 'gpt-2', name: 'GPT-2' };
+    state = { ...defaultState, availableModels: [...defaultState.availableModels, second] };
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: '模型 GPT' }));
+    const listbox = await screen.findByRole('listbox', { name: '可用模型' });
+
+    // 手写 listbox 只声明了 role 而没实现键盘行为，读屏却据此提示“用方向键浏览”。
+    // 这里断言方向键真的能移动高亮、回车真的能提交
+    expect(within(listbox).getByRole('option', { name: /GPT-2/ })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
+    await user.keyboard('{ArrowDown}');
+    expect(within(listbox).getByRole('option', { name: /GPT-2/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+
+    await user.keyboard('{Enter}');
+    await vi.waitFor(() => {
+      expect(api.setSessionModel).toHaveBeenCalledWith('session-a', {
+        provider: 'openai',
+        id: 'gpt-2',
+      });
+    });
+  });
+
   it('提交后在运行记录到达前立即显示运行标记', async () => {
     const user = userEvent.setup();
     let resolvePrompt!: () => void;
@@ -501,6 +531,24 @@ describe('ChatPage 窄屏会话抽屉', () => {
     expect(screen.getByRole('dialog', { name: '会话列表' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: '会话列表' })).not.toBeInTheDocument();
+  });
+
+  it('窄屏下抽屉把焦点收进面板，关闭后还给唤出按钮', async () => {
+    const user = userEvent.setup();
+    mockNarrow();
+    renderPage();
+
+    const trigger = await screen.findByRole('button', { name: '打开会话列表' });
+    await user.click(trigger);
+    const drawer = screen.getByRole('dialog', { name: '会话列表' });
+
+    // 手写固定层只做到“看起来像对话框”：焦点留在背后的唤出按钮上，
+    // 背后内容也仍在无障碍树里。对话框基元把焦点移入面板并限制在内部
+    expect(drawer.contains(document.activeElement)).toBe(true);
+    expect(trigger).not.toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
   });
 
   it('宽屏下不渲染抽屉唤出按钮', async () => {

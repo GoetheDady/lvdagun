@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Loader2, Menu, Send } from 'lucide-react';
+import { CircleAlert, Loader2, Menu, Send } from 'lucide-react';
 
 import type { AvailableModel } from '@lvdagun/protocol';
 
 import { ModelSelector } from '@/components/chat/model-selector';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   COMPOSER_BUTTON_CLASS,
@@ -160,9 +161,14 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
           </div>
 
           {error ? (
-            <div className="mx-auto mb-2 flex max-w-xl items-center gap-3 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-              <span className="min-w-0 flex-1 break-words">{error}</span>
-            </div>
+            /* Alert 自带 role="alert":创建失败时读屏会主动播报,
+               否则用户只看到输入框还原了却不知道原因 */
+            <Alert variant="destructive" className="mx-auto mb-2 max-w-xl items-center">
+              <CircleAlert />
+              <AlertDescription className="min-w-0 break-words text-destructive">
+                {error}
+              </AlertDescription>
+            </Alert>
           ) : null}
 
           <div role="group" aria-label="消息输入区" className={COMPOSER_GROUP_CLASS}>

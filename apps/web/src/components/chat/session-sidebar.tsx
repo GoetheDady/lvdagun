@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Archive,
+  CircleAlert,
   Ellipsis,
   Loader2,
   MessageSquare,
@@ -24,6 +25,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
@@ -192,7 +194,13 @@ export function SessionSidebar({
               </div>
             );
           })}
-          {error ? <p className="px-2 py-2 text-xs text-destructive">{error}</p> : null}
+          {error ? (
+            /* 侧栏很窄,Alert 收紧内边距;role="alert" 让加载失败被主动播报 */
+            <Alert variant="destructive" className="mx-2 my-2 items-start px-2.5 py-2">
+              <CircleAlert />
+              <AlertDescription className="text-xs">{error}</AlertDescription>
+            </Alert>
+          ) : null}
         </nav>
 
         <div className="flex shrink-0 items-center p-2">

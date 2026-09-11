@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { Search } from 'lucide-react';
-
-import { Input } from '@/components/ui/input';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 
 interface SearchableListProps {
   placeholder: string;
@@ -15,51 +18,39 @@ interface SearchableListProps {
 /**
  * 展示带搜索过滤的单选列表。
  *
+ * 匹配交给 Command(cmdk):它同时提供模糊过滤、方向键导航与 listbox/option 语义,
+ * 手写过滤只能做到第一条,后两条会让读屏软件按列表控件播报却按不到方向键。
+ *
  * @param props - 列表内容、选中值和选择回调
  * @returns 搜索列表元素
  */
 export function SearchableList(props: SearchableListProps): React.JSX.Element {
-  const [query, setQuery] = useState('');
-  const filtered = props.items?.filter(
-    (item) =>
-      item.name.toLowerCase().includes(query.toLowerCase()) ||
-      item.id.toLowerCase().includes(query.toLowerCase())
-  );
-
   return (
-    <>
-      <div className="relative">
-        <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-8"
-          placeholder={props.placeholder}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+    <Command shouldFilter loop label={props.placeholder}>
+      <CommandInput placeholder={props.placeholder} />
+      {/* label 要挂在 List 上:cmdk 的 Root label 给输入框命名,列表名用自己的 */}
+      <CommandList label={props.placeholder} className="max-h-72">
         {props.items === null ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">{props.loadingText}</p>
-        ) : filtered && filtered.length > 0 ? (
-          filtered.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => props.onSelect(item.id)}
-              className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                props.selectedId === item.id
-                  ? 'border-primary bg-primary/5 text-foreground'
-                  : 'border-transparent hover:bg-muted'
-              }`}
-            >
-              <span>{item.name}</span>
-              <span className="text-xs text-muted-foreground">{item.id}</span>
-            </button>
-          ))
+          <CommandEmpty>{props.loadingText}</CommandEmpty>
         ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">{props.emptyText}</p>
+          <>
+            <CommandEmpty>{props.emptyText}</CommandEmpty>
+            {props.items.map((item) => (
+              <CommandItem
+                key={item.id}
+                value={`${item.name} ${item.id}`}
+                // 选中态走 data-checked:CommandItem 用它显示右侧对勾,
+                // cmdk 的 aria-selected 表示键盘高亮项,不能当成"已选"
+                data-checked={props.selectedId === item.id}
+                onSelect={() => props.onSelect(item.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{item.id}</span>
+              </CommandItem>
+            ))}
+          </>
         )}
-      </div>
-    </>
+      </CommandList>
+    </Command>
   );
 }

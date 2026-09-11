@@ -12,10 +12,13 @@ import type {
 import { SearchableList } from '@/components/common/searchable-list';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { api } from '@/services/api-client';
 import { maskKey } from '@/utils/mask-api-key';
+
+/** 连接失败信息与 API Key 输入框的绑定 id。 */
+const API_KEY_ERROR_ID = 'api-key-error';
 
 /**
  * Provider 编辑页:新建与编辑共用;编辑时 Provider 锁定,换 Provider = 删除重建。
@@ -63,6 +66,9 @@ function ProviderEditPage(): React.JSX.Element {
   const providerName = providers?.find((item) => item.id === provider)?.name ?? provider;
   // 测试与保存都用生效 Key:输入框的新值优先,留空则沿用已存凭据
   const effectiveApiKey = apiKey || existing?.apiKey || '';
+  // 失败信息归属于 API Key 字段:它与输入框用 aria-describedby 双向绑定,
+  // 读屏念到 Key 输入框时会同时读出来,而不是只靠视觉扫到下方红字
+  const apiKeyError = testResult && !testResult.ok ? testResult.message : null;
 
   /** 用生效凭据对选定模型发起连接测试 */
   const handleTest = async (): Promise<void> => {
@@ -110,17 +116,17 @@ function ProviderEditPage(): React.JSX.Element {
       <Card>
         <CardContent className="space-y-5 p-6">
           {isEdit ? (
-            <div className="space-y-2">
-              <Label>Provider</Label>
+            <Field>
+              <FieldLabel>Provider</FieldLabel>
               {/* 编辑态:服务商锁定,米黄底只读展示,与可编辑字段区分 */}
               <div className="flex items-baseline gap-2 rounded-md border bg-muted/40 px-3 py-2">
                 <p className="text-sm font-medium">{providerName}</p>
                 <span className="font-mono text-xs text-muted-foreground">{provider}</span>
               </div>
-            </div>
+            </Field>
           ) : (
-            <div className="space-y-2">
-              <Label htmlFor="provider-select">Provider</Label>
+            <Field>
+              <FieldLabel htmlFor="provider-select">Provider</FieldLabel>
               <SearchableList
                 placeholder="搜索服务商…"
                 items={providers}
@@ -129,15 +135,19 @@ function ProviderEditPage(): React.JSX.Element {
                 emptyText="没有匹配的服务商"
                 onSelect={setProvider}
               />
-            </div>
+            </Field>
           )}
 
-          <div className="space-y-2">
-            <Label htmlFor="api-key">{provider ? `${providerName} 的 API Key` : 'API Key'}</Label>
+          <Field data-invalid={apiKeyError !== null}>
+            <FieldLabel htmlFor="api-key">
+              {provider ? `${providerName} 的 API Key` : 'API Key'}
+            </FieldLabel>
             <Input
               id="api-key"
               type="password"
               className="font-mono"
+              aria-invalid={apiKeyError !== null}
+              aria-describedby={apiKeyError ? API_KEY_ERROR_ID : undefined}
               placeholder={existing ? `${maskKey(existing.apiKey)}(留空沿用)` : 'sk-…(本地模型可留空)'}
               value={apiKey}
               onChange={(event) => {
@@ -145,10 +155,11 @@ function ProviderEditPage(): React.JSX.Element {
                 setTestResult(null);
               }}
             />
-          </div>
+            <FieldError id={API_KEY_ERROR_ID}>{apiKeyError}</FieldError>
+          </Field>
 
-          <div className="space-y-2">
-            <Label>测试模型</Label>
+          <Field>
+            <FieldLabel>测试模型</FieldLabel>
             <SearchableList
               placeholder="搜索模型…"
               items={models}
@@ -157,19 +168,16 @@ function ProviderEditPage(): React.JSX.Element {
               emptyText="没有可用模型"
               onSelect={setTestModelId}
             />
-          </div>
+          </Field>
 
-          {testResult &&
-            (testResult.ok ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="inline-flex shrink-0 items-center rounded-[4px] bg-primary px-1.5 py-0.5 font-display text-xs font-bold text-primary-foreground">
-                  验讫
-                </span>
-                <span className="text-primary">连接成功</span>
-              </div>
-            ) : (
-              <p className="text-sm text-destructive">{testResult.message}</p>
-            ))}
+          {testResult?.ok ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="inline-flex shrink-0 items-center rounded-[4px] bg-primary px-1.5 py-0.5 font-display text-xs font-bold text-primary-foreground">
+                验讫
+              </span>
+              <span className="text-primary">连接成功</span>
+            </div>
+          ) : null}
 
           <div className="flex items-center gap-2 border-t pt-4">
             <Button

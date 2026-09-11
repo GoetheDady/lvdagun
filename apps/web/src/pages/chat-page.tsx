@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { Archive, Loader2, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
+import { Archive, CircleAlert, Loader2, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
 
 import { ChatTranscript } from '@/components/chat/chat-transcript';
 import { ModelSelector } from '@/components/chat/model-selector';
@@ -8,6 +8,7 @@ import { PendingMessages } from '@/components/chat/pending-messages';
 import { SessionExecutionPlanView } from '@/components/chat/session-execution-plan';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   COMPOSER_BUTTON_CLASS,
   COMPOSER_GROUP_CLASS,
@@ -278,9 +279,17 @@ function ChatWorkspace({
           )}
 
           {state.error ? (
-            <div className="mt-5 flex max-w-[min(94%,48rem)] items-center gap-3 rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
-              <span className="min-w-0 flex-1 break-words">{state.error.message}</span>
-            </div>
+            /* Alert 自带 role="alert":报错出现的瞬间读屏会主动播报,
+               原来的裸 div 只有视觉变化,不主动读就不知道出错了 */
+            <Alert
+              variant="destructive"
+              className="mt-5 max-w-[min(94%,48rem)] items-center"
+            >
+              <CircleAlert />
+              <AlertDescription className="min-w-0 break-words text-destructive">
+                {state.error.message}
+              </AlertDescription>
+            </Alert>
           ) : null}
           <div ref={bottomRef} />
         </div>

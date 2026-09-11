@@ -102,7 +102,27 @@ describe('ProviderEditPage', () => {
   it('测试模型列表随 Provider 加载,首个模型默认选中', async () => {
     renderPage('/settings/model/deepseek');
 
-    await screen.findByText('DeepSeek V4');
-    expect(screen.getByText('DeepSeek V4').closest('button')).toHaveClass('border-primary');
+    const selected = await screen.findByRole('option', { name: /DeepSeek V4/ });
+    expect(selected).toHaveAttribute('data-checked', 'true');
+  });
+
+  it('服务商列表支持方向键导航并回车选中', async () => {
+    renderPage('/settings/model/new');
+
+    const listbox = await screen.findByRole('listbox', { name: '搜索服务商…' });
+    expect(listbox).toBeInTheDocument();
+    await userEvent.click(screen.getByPlaceholderText('搜索服务商…'));
+
+    // 原先的列表只有可点行:没有单击语义也没有键盘行为
+    await userEvent.keyboard('{ArrowDown}');
+    expect(screen.getByRole('option', { name: /OpenAI/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() => {
+      expect(api.listModels).toHaveBeenCalledWith('openai');
+    });
   });
 });
