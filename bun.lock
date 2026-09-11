@@ -39,6 +39,7 @@
       },
       "dependencies": {
         "@earendil-works/pi-agent-core": "0.84.3",
+        "@earendil-works/pi-ai": "0.84.3",
         "@earendil-works/pi-coding-agent": "0.84.3",
         "@juicesharp/rpiv-todo": "2.6.4",
         "@lvdagun/protocol": "workspace:*",

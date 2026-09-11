@@ -3,6 +3,7 @@
  *
  * 本模块是本地服务中唯一创建 Pi 运行时和会话的地方。
  */
+import { randomUUID } from 'node:crypto';
 import { mkdir, rename, rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -45,6 +46,31 @@ const INFRA_PROVIDERS = new Set([
   'radius',
   'amazon-bedrock',
 ]);
+
+/**
+ * 构造 opencode 网关要求的归属头。
+ *
+ * opencode(含 Go 计划)要求请求带 x-opencode-session 才能路由,Pi 在会话层注入该头;
+ * 连接测试没有会话,必须按同样的规则自行补齐,否则网关直接返回 400 MissingSessionID。
+ *
+ * @param model - 待测试的模型
+ * @returns 归属头;非 opencode 模型返回 undefined
+ */
+function opencodeAttributionHeaders(model: {
+  provider: string;
+  baseUrl?: string;
+}): Record<string, string> | undefined {
+  const isOpencodeModel =
+    model.provider === 'opencode' ||
+    model.provider === 'opencode-go' ||
+    // 自定义 provider 也可能指向 opencode 网关，与 Pi 会话层的判断保持一致
+    (typeof model.baseUrl === 'string' &&
+      URL.canParse(model.baseUrl) &&
+      new URL(model.baseUrl).hostname === 'opencode.ai');
+  return isOpencodeModel
+    ? { 'x-opencode-session': randomUUID(), 'x-opencode-client': 'pi' }
+    : undefined;
+}
 
 const DEFAULT_SYSTEM_PROMPT = '你是驴打滚,运行在用户电脑上的个人 AI 管家。回答简洁、直接、用中文。';
 const DEFAULT_TOOLS = ['read', 'bash', 'edit', 'write', 'todo', 'delegate'];
@@ -273,7 +299,12 @@ export function createPiAgentHubAdapter(options: { dataDir: string }): AgentHubA
           messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
           tools: [],
         },
-        { apiKey, maxTokens: 1, signal: AbortSignal.timeout(10_000) }
+        {
+          apiKey,
+          maxTokens: 1,
+          signal: AbortSignal.timeout(10_000),
+          headers: opencodeAttributionHeaders(model),
+        }
       );
 
       try {

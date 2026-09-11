@@ -56,6 +56,7 @@ const pi = vi.hoisted(() => ({
     setRuntimeApiKeyCalls: [] as Array<{ provider: string; apiKey: string }>,
     loginCalls: [] as Array<{ provider: string; type: string; apiKey: string }>,
     streamApiKeys: [] as Array<string | undefined>,
+    streamHeaders: [] as Array<Record<string, string> | undefined>,
     runtimeCreateOptions: null as null | Record<string, unknown>,
     setModelCalls: [] as Array<{ provider: string; id: string }>,
     currentModel: null as null | { provider: string; id: string; name: string },
@@ -158,8 +159,13 @@ vi.mock('@earendil-works/pi-coding-agent', () => {
           reasoning: true,
         }))
       ),
-    streamSimple: (_model: unknown, context: unknown, options?: { apiKey?: string }) => {
+    streamSimple: (
+      _model: unknown,
+      context: unknown,
+      options?: { apiKey?: string; headers?: Record<string, string> }
+    ) => {
       pi.state.streamApiKeys.push(options?.apiKey);
+      pi.state.streamHeaders.push(options?.headers);
       pi.state.streamContexts.push(context);
       return {
         result: async () => {
@@ -362,6 +368,7 @@ beforeEach(() => {
   pi.state.setRuntimeApiKeyCalls = [];
   pi.state.loginCalls = [];
   pi.state.streamApiKeys = [];
+  pi.state.streamHeaders = [];
   pi.state.streamContexts = [];
   pi.state.runtimeCreateOptions = null;
   pi.state.setModelCalls = [];
@@ -437,6 +444,7 @@ describe('createPiAgentHubAdapter 连接测试', () => {
     const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
     await expect(hub.testConnection('anthropic', 'sk-test', 'claude-a')).resolves.toEqual({ ok: true });
     expect(pi.state.streamApiKeys).toEqual(['sk-test']);
+    expect(pi.state.streamHeaders).toEqual([undefined]);
     expect(pi.state.loginCalls).toEqual([
       { provider: 'anthropic', type: 'api_key', apiKey: 'sk-test' },
     ]);
@@ -454,6 +462,25 @@ describe('createPiAgentHubAdapter 连接测试', () => {
       message: '401 凭证无效',
     });
     expect(pi.state.loginCalls).toEqual([]);
+  });
+
+  // opencode 网关缺 x-opencode-session 会返回 400,连接测试必须自己补上(Pi 只在会话层注入)
+  it('测试 opencode 模型时补齐归属头', async () => {
+    pi.state.providers = [
+      {
+        id: 'opencode-go',
+        name: 'OpenCode Go',
+        hasApiKeyAuth: true,
+        models: [{ id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash' }],
+      },
+    ];
+    pi.state.streamResult = { stopReason: 'stop' };
+    const hub = createPiAgentHubAdapter({ dataDir: '/tmp/lvdagun-test' });
+    await expect(
+      hub.testConnection('opencode-go', 'sk-test', 'deepseek-flash')
+    ).resolves.toEqual({ ok: true });
+    expect(pi.state.streamHeaders[0]).toMatchObject({ 'x-opencode-client': 'pi' });
+    expect(pi.state.streamHeaders[0]?.['x-opencode-session']).toEqual(expect.any(String));
   });
 });
 
