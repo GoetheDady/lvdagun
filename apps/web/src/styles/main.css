@@ -1,6 +1,10 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import '@fontsource-variable/inter';
+/* 上游 shadcn 的 data-* 变体:把 Radix 的 data-state / data-orientation 映射成
+   data-open:、data-closed: 这类简写。radix-vega 方言的组件依赖它,少了这些变体
+   打开/关闭动画会静默失效(不报错,只是不动) */
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 @source '../../../../node_modules/streamdown/dist/*.js';
