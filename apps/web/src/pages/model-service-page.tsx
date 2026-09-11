@@ -5,18 +5,27 @@ import { ChevronsUpDown, Pencil, Plus, Server, Trash2 } from 'lucide-react';
 import type { AvailableModel, ModelReference, ModelSettings, ProviderInfo } from '@lvdagun/protocol';
 
 import { ModelSelector } from '@/components/chat/model-selector';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from '@/components/ui/item';
+import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/services/api-client';
 import { cn } from '@/utils/class-names';
 import { maskKey } from '@/utils/mask-api-key';
@@ -201,66 +210,86 @@ function ModelServicePage(): React.JSX.Element {
             <CardDescription>配置好凭据的服务商,其名下模型全部可用。</CardDescription>
           </div>
           {settings && settings.providers.length > 0 ? (
-            <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+            <Badge
+              variant="secondary"
+              className="shrink-0 rounded-full px-2.5 py-1 font-normal text-muted-foreground"
+            >
               {settings.providers.length} 个服务
-            </span>
+            </Badge>
           ) : null}
         </CardHeader>
         <CardContent>
           {settings === null ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">加载中…</p>
-          ) : settings.providers.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <span className="mb-1 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <Server className="size-5" />
-              </span>
-              <p className="text-sm font-medium">尚未配置任何模型服务</p>
-              <p className="text-xs text-muted-foreground">
-                添加一个服务商并填入 API Key,它的模型即可用于对话。
-              </p>
-              <Link
-                to="/settings/model/new"
-                className={buttonVariants({ size: 'sm', className: 'mt-2' })}
-              >
-                <Plus />
-                新建模型服务
-              </Link>
-            </div>
-          ) : (
-            <ul className="divide-y divide-border">
-              {settings.providers.map((entry) => (
-                <li key={entry.provider} className="flex items-center gap-3 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium">{providerName(entry.provider)}</p>
-                      {entry.provider === defaultModel?.provider ? (
-                        <Seal className="size-5 text-[10px]" />
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                      {`API Key:${maskKey(entry.apiKey)}`}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Link
-                      to={`/settings/model/${entry.provider}`}
-                      className={buttonVariants({ variant: 'ghost', size: 'icon' })}
-                      aria-label={`编辑 ${entry.provider}`}
-                    >
-                      <Pencil />
-                    </Link>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`删除 ${entry.provider}`}
-                      onClick={() => setPendingDelete(entry.provider)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                </li>
+            /* 占位行高对齐真实服务行,配置到达时不跳 */
+            <div aria-hidden="true" className="divide-y divide-border">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="space-y-2 py-3">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-48" />
+                </div>
               ))}
-            </ul>
+            </div>
+          ) : settings.providers.length === 0 ? (
+            <Empty className="border-0 p-0">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Server />
+                </EmptyMedia>
+                <EmptyTitle>尚未配置任何模型服务</EmptyTitle>
+                <EmptyDescription>
+                  添加一个服务商并填入 API Key,它的模型即可用于对话。
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent className="max-w-none">
+                <Link to="/settings/model/new" className={buttonVariants({ size: 'sm' })}>
+                  <Plus />
+                  新建模型服务
+                </Link>
+              </EmptyContent>
+            </Empty>
+          ) : (
+            <ItemGroup className="divide-y divide-border">
+              {settings.providers.map((entry) => (
+                <Item
+                  key={entry.provider}
+                  asChild
+                  size="sm"
+                  className="gap-3 rounded-none px-0 py-3"
+                >
+                  <li>
+                    <ItemContent>
+                      <ItemTitle>
+                        <span className="truncate">{providerName(entry.provider)}</span>
+                        {entry.provider === defaultModel?.provider ? (
+                          <Seal className="size-5 text-[10px]" />
+                        ) : null}
+                      </ItemTitle>
+                      <ItemDescription className="font-mono">
+                        {`API Key:${maskKey(entry.apiKey)}`}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Button asChild variant="ghost" size="icon">
+                        <Link
+                          to={`/settings/model/${entry.provider}`}
+                          aria-label={`编辑 ${entry.provider}`}
+                        >
+                          <Pencil />
+                        </Link>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`删除 ${entry.provider}`}
+                        onClick={() => setPendingDelete(entry.provider)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </ItemActions>
+                  </li>
+                </Item>
+              ))}
+            </ItemGroup>
           )}
         </CardContent>
       </Card>

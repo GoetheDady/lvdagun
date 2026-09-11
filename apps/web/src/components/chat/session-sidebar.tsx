@@ -3,7 +3,6 @@ import {
   Archive,
   CircleAlert,
   Ellipsis,
-  Loader2,
   MessageSquare,
   Pencil,
   Plus,
@@ -25,8 +24,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { IconTooltip } from '@/components/common/icon-tooltip';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { Spinner } from '@/components/ui/spinner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,8 +107,14 @@ export function SessionSidebar({
 
         <nav aria-label="会话列表" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
           {loading && sessions.length === 0 ? (
-            <div className="flex h-16 items-center justify-center text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
+            /* 占位高度对齐真实会话行,数据到达时原地替换而不跳高 */
+            <div aria-hidden="true" className="space-y-2 pt-2">
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="space-y-1.5 rounded-md px-2.5 py-2">
+                  <Skeleton className="h-4 w-40 bg-sidebar-accent/60" />
+                  <Skeleton className="h-3 w-20 bg-sidebar-accent/40" />
+                </div>
+              ))}
             </div>
           ) : null}
           {sessions.map((session) => {
@@ -122,11 +130,14 @@ export function SessionSidebar({
                     : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
                 }`}
               >
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   aria-label={`打开会话：${session.title}`}
                   aria-current={active ? 'page' : undefined}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 pr-10 text-left"
+                  // h-auto/justify-start/font-normal 抹平 Button 默认尺寸;行底色由外层容器负责,
+                  // 因此把 ghost 自带的悬停底压掉,避免与容器悬停叠加成两层
+                  className="h-auto min-w-0 flex-1 justify-start gap-2 rounded-md px-2.5 py-2 pr-10 text-left font-normal hover:bg-transparent"
                   onClick={() => onSelect(session.id)}
                 >
                   <MessageSquare className={`size-4 shrink-0 ${active ? 'text-primary' : ''}`} />
@@ -147,21 +158,23 @@ export function SessionSidebar({
                       {DATE_FORMATTER.format(session.updatedAt)}
                     </span>
                   </span>
-                </button>
+                </Button>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       aria-label={`更多操作：${session.title}`}
-                      className="absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                      className="absolute top-1/2 right-1.5 size-7 -translate-y-1/2 opacity-0 transition-opacity hover:bg-sidebar-accent focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
                     >
                       {mutating ? (
-                        <Loader2 className="size-4 animate-spin" />
+                        <Spinner className="size-4" />
                       ) : (
                         <Ellipsis className="size-4" />
                       )}
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" aria-label={`${session.title}会话操作`}>
                     <DropdownMenuItem
@@ -318,15 +331,18 @@ function HubConnectionIndicator({
 
   if (status === 'failed') {
     return (
-      <button
-        type="button"
-        aria-label={presentation.label}
-        className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        title={presentation.label}
-        onClick={onReconnect}
-      >
-        {dot}
-      </button>
+      <IconTooltip label={presentation.label}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="shrink-0 hover:bg-sidebar-accent"
+          aria-label={presentation.label}
+          onClick={onReconnect}
+        >
+          {dot}
+        </Button>
+      </IconTooltip>
     );
   }
 

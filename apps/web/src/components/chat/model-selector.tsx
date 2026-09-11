@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronsUpDown, Loader2 } from 'lucide-react';
+import { ChevronsUpDown } from 'lucide-react';
 
 import type { AvailableModel, ModelReference } from '@lvdagun/protocol';
 
@@ -13,6 +13,8 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Spinner } from '@/components/ui/spinner';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/utils/class-names';
 
 interface ModelSelectorProps {
@@ -76,25 +78,36 @@ export function ModelSelector(props: ModelSelectorProps): React.JSX.Element {
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn('min-w-0 max-w-48 gap-1.5 px-2 text-muted-foreground', props.className)}
-          disabled={props.disabled}
-          aria-label={`模型 ${props.value.name}`}
-          title={`${props.value.providerName} / ${props.value.name}`}
-        >
-          {props.loading ? <Loader2 className="animate-spin" /> : null}
-          {props.triggerChildren ?? (
-            <>
-              <span className="truncate text-foreground">{props.value.name}</span>
-              <ChevronsUpDown className="size-3.5" />
-            </>
-          )}
-        </Button>
-      </PopoverTrigger>
+      {/* 提示必须包在触发器外层:asChild 的 Slot 会把 props 与 ref 克隆给直接子节点,
+          而 Tooltip.Root 只是上下文组件、不转发,套在内层会让浮层点不开 */}
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  'min-w-0 max-w-48 gap-1.5 px-2 text-muted-foreground',
+                  props.className
+                )}
+                disabled={props.disabled}
+                aria-label={`模型 ${props.value.name}`}
+              >
+                {props.loading ? <Spinner /> : null}
+                {props.triggerChildren ?? (
+                  <>
+                    <span className="truncate text-foreground">{props.value.name}</span>
+                    <ChevronsUpDown className="size-3.5" />
+                  </>
+                )}
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{`${props.value.providerName} / ${props.value.name}`}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <PopoverContent
         side="top"
         align="end"

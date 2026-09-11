@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Clock3,
   Copy,
-  Loader2,
   Pencil,
   Send,
   Split,
@@ -41,6 +40,8 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker';
+import { IconTooltip } from '@/components/common/icon-tooltip';
+import { Spinner } from '@/components/ui/spinner';
 import { MarkdownText } from './markdown-text';
 import { SubagentCards } from './subagent-card';
 
@@ -79,7 +80,7 @@ function AgentRunMarker({ text }: { text: string }): React.JSX.Element {
       className="max-w-[min(94%,48rem)] animate-in fade-in slide-in-from-bottom-2 text-soy-foreground duration-300"
     >
       <MarkerIcon>
-        <Loader2 className="animate-spin" />
+        <Spinner />
       </MarkerIcon>
       <MarkerContent>{text}</MarkerContent>
     </Marker>
@@ -168,7 +169,7 @@ function UserMessage(props: {
               onClick={props.onSubmitEdit}
             >
               {props.editing.submitting ? (
-                <Loader2 className="animate-spin" />
+                <Spinner />
               ) : (
                 <Send className="size-3.5" />
               )}
@@ -188,25 +189,29 @@ function UserMessage(props: {
       <div className="pointer-events-none mt-1 flex min-h-7 items-center gap-1 text-muted-foreground opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
         <time className="px-1 text-xs">{formatTime(props.item.createdAt)}</time>
         {props.editable ? (
+          <IconTooltip label="编辑并重发">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label="编辑并重发"
+              onClick={() => props.onStartEdit(props.item.itemId, props.item.text)}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          </IconTooltip>
+        ) : null}
+        <IconTooltip label="复制消息">
           <Button
             size="icon"
             variant="ghost"
             className="size-7"
-            title="编辑并重发"
-            onClick={() => props.onStartEdit(props.item.itemId, props.item.text)}
+            aria-label="复制消息"
+            onClick={() => void navigator.clipboard.writeText(props.item.text)}
           >
-            <Pencil className="size-4" />
+            <Copy className="size-4" />
           </Button>
-        ) : null}
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-7"
-          title="复制消息"
-          onClick={() => void navigator.clipboard.writeText(props.item.text)}
-        >
-          <Copy className="size-4" />
-        </Button>
+        </IconTooltip>
       </div>
     </article>
   );
@@ -324,7 +329,7 @@ function ToolRun(props: {
         >
           {status === 'running' ? '运行中' : status === 'error' ? '执行失败' : '执行完成'}
         </span>
-        {status === 'running' ? <Loader2 className="size-3.5 animate-spin text-soy" /> : null}
+        {status === 'running' ? <Spinner className="size-3.5 text-soy" /> : null}
       </summary>
       <div className="space-y-3 bg-card/70 px-3 py-2.5 text-xs">
         <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-card p-2 font-mono leading-5">
@@ -622,32 +627,36 @@ function AssistantRun(props: {
       {props.markerText ? <AgentRunMarker text={props.markerText} /> : null}
       {props.run.status !== 'accepted' && props.run.status !== 'running' ? (
         <div className="pointer-events-none flex min-h-7 items-center gap-1 text-muted-foreground opacity-0 transition-opacity group-hover/run:pointer-events-auto group-hover/run:opacity-100">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            title="复制回复"
-            disabled={!finalText}
-            onClick={() => void navigator.clipboard.writeText(finalText)}
-          >
-            <Copy className="size-4" />
-          </Button>
+          <IconTooltip label="复制回复">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              aria-label="复制回复"
+              disabled={!finalText}
+              onClick={() => void navigator.clipboard.writeText(finalText)}
+            >
+              <Copy className="size-4" />
+            </Button>
+          </IconTooltip>
           <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7"
-                title="分叉为新会话"
-                disabled={props.forking || props.actionsDisabled}
-              >
-                {props.forking ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Split className="size-4 rotate-90" />
-                )}
-              </Button>
-            </AlertDialogTrigger>
+            <IconTooltip label="分叉为新会话">
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  aria-label="分叉为新会话"
+                  disabled={props.forking || props.actionsDisabled}
+                >
+                  {props.forking ? (
+                    <Spinner className="size-4" />
+                  ) : (
+                    <Split className="size-4 rotate-90" />
+                  )}
+                </Button>
+              </AlertDialogTrigger>
+            </IconTooltip>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>分叉为新会话？</AlertDialogTitle>
@@ -677,7 +686,7 @@ export function ChatTranscript(props: ChatTranscriptProps): React.JSX.Element {
   if (props.loading) {
     return (
       <div className="flex min-h-40 items-center justify-center">
-        <Loader2 className="size-5 animate-spin" />
+        <Spinner className="size-5 animate-spin" />
       </div>
     );
   }

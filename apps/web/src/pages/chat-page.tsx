@@ -1,20 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { Archive, CircleAlert, Loader2, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
+import { Archive, CircleAlert, Menu, MessageSquareOff, Send, Square } from 'lucide-react';
 
 import { ChatTranscript } from '@/components/chat/chat-transcript';
+import { GreetingSuggestions } from '@/components/chat/greeting-suggestions';
 import { ModelSelector } from '@/components/chat/model-selector';
 import { PendingMessages } from '@/components/chat/pending-messages';
 import { SessionExecutionPlanView } from '@/components/chat/session-execution-plan';
 import { ThinkingLevelSlider } from '@/components/chat/thinking-level-slider';
+import { IconTooltip } from '@/components/common/icon-tooltip';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   COMPOSER_BUTTON_CLASS,
   COMPOSER_GROUP_CLASS,
   COMPOSER_TEXTAREA_CLASS,
   COMPOSER_TOOL_ROW_CLASS,
-  SUGGESTIONS,
 } from '@/components/chat/composer-constants';
 import { useChatSession } from '@/hooks/use-chat-session';
 import {
@@ -238,26 +240,7 @@ function ChatWorkspace({
         <div className="mx-auto max-w-3xl">
           {!state.loading && !hasTranscript && !runMarker ? (
             <div className="flex min-h-[45vh] flex-col items-center justify-center gap-7 text-center">
-              <div className="space-y-3">
-                <h3 className="font-display text-4xl font-bold tracking-wide">
-                  有什么事，吩咐吧。
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  驴打滚在本机待命，对话不会离开这台电脑
-                </p>
-              </div>
-              <div className="flex max-w-xl flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className="rounded-full border border-border bg-card px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-                    onClick={() => setInput(suggestion)}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+              <GreetingSuggestions onPick={setInput} />
             </div>
           ) : (
             <ChatTranscript
@@ -380,44 +363,42 @@ function ChatWorkspace({
             {/* 忙碌归为一个图标：加载和发送中的未知态都显示 Loader，
                 只有权威状态（运行中/空闲）才分别切 Stop/Send，避免路由切换时闪回 Send */}
             {state.isRunning ? (
-              <Button
-                size="icon"
-                variant="outline"
-                className={COMPOSER_BUTTON_CLASS}
-                disabled={state.aborting}
-                title="停止"
-                aria-label="停止"
-                onClick={() => {
-                  void abort().then((texts) => {
-                    setInput((draft) => prependDraft(texts, draft));
-                  });
-                }}
-              >
-                {state.aborting ? (
-                  <Loader2 className="animate-spin" />
-                ) : (
-                  <Square className="fill-current" />
-                )}
-              </Button>
+              <IconTooltip label="停止">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className={COMPOSER_BUTTON_CLASS}
+                  disabled={state.aborting}
+                  aria-label="停止"
+                  onClick={() => {
+                    void abort().then((texts) => {
+                      setInput((draft) => prependDraft(texts, draft));
+                    });
+                  }}
+                >
+                  {state.aborting ? <Spinner /> : <Square className="fill-current" />}
+                </Button>
+              </IconTooltip>
             ) : (
-              <Button
-                size="icon"
-                className={`${COMPOSER_BUTTON_CLASS} ${composerSettled ? '' : '!transition-none'}`}
-                disabled={
-                  !input.trim() ||
-                  state.loading ||
-                  state.sending ||
-                  state.settingModel ||
-                  state.settingThinkingLevel ||
-                  !canAct ||
-                  editing !== null
-                }
-                title="发送"
-                aria-label="发送"
-                onClick={handleSend}
-              >
-                {state.loading || state.sending ? <Loader2 className="animate-spin" /> : <Send />}
-              </Button>
+              <IconTooltip label="发送">
+                <Button
+                  size="icon"
+                  className={`${COMPOSER_BUTTON_CLASS} ${composerSettled ? '' : '!transition-none'}`}
+                  disabled={
+                    !input.trim() ||
+                    state.loading ||
+                    state.sending ||
+                    state.settingModel ||
+                    state.settingThinkingLevel ||
+                    !canAct ||
+                    editing !== null
+                  }
+                  aria-label="发送"
+                  onClick={handleSend}
+                >
+                  {state.loading || state.sending ? <Spinner /> : <Send />}
+                </Button>
+              </IconTooltip>
             )}
           </div>
         </div>

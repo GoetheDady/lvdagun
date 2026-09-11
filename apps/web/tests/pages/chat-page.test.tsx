@@ -382,14 +382,14 @@ describe('ChatPage 产品历史投影', () => {
   it('整条助手回复只显示一组复制和分叉操作', async () => {
     renderPage();
     await screen.findByText('接着上面已经生成的继续生成');
-    expect(screen.getAllByTitle('复制回复')).toHaveLength(1);
-    expect(screen.getAllByTitle('分叉为新会话')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '复制回复' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '分叉为新会话' })).toHaveLength(1);
   });
 
   it('编辑用户消息使用产品 itemId', async () => {
     const user = userEvent.setup();
     renderPage();
-    const edit = await screen.findByTitle('编辑并重发');
+    const edit = await screen.findByRole('button', { name: '编辑并重发' });
     await user.click(edit);
     const textarea = screen.getByRole('textbox', { name: '编辑用户消息' });
     await user.clear(textarea);
@@ -563,7 +563,7 @@ describe('ChatPage 分叉二次确认', () => {
   it('点击分叉先弹确认，确认后才调用分叉接口', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByTitle('分叉为新会话'));
+    await user.click(await screen.findByRole('button', { name: '分叉为新会话' }));
 
     expect(api.forkSession).not.toHaveBeenCalled();
     await user.click(await screen.findByRole('button', { name: '分叉' }));
@@ -573,7 +573,7 @@ describe('ChatPage 分叉二次确认', () => {
   it('取消确认对话框则不调用分叉接口', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByTitle('分叉为新会话'));
+    await user.click(await screen.findByRole('button', { name: '分叉为新会话' }));
     await user.click(screen.getByRole('button', { name: '取消' }));
 
     expect(api.forkSession).not.toHaveBeenCalled();

@@ -1,10 +1,11 @@
-import { Check, ChevronLeft, Loader2 } from 'lucide-react';
+import { Check, ChevronLeft } from 'lucide-react';
 
 import type { TestConnectionResult } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Spinner } from '@/components/ui/spinner';
 
 /** 连接失败信息与 API Key 输入框的绑定 id。 */
 const API_KEY_ERROR_ID = 'wizard-api-key-error';
@@ -63,7 +64,7 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
           disabled={props.testing || props.apiKey.trim() === ''}
           onClick={props.onTest}
         >
-          {props.testing ? <Loader2 className="size-4 animate-spin" /> : null}
+          {props.testing ? <Spinner className="size-4 animate-spin" /> : null}
           测试连接
         </Button>
         <Button
@@ -71,7 +72,7 @@ export function ApiKeyStep(props: ApiKeyStepProps): React.JSX.Element {
           disabled={props.saving || props.testResult === null || !props.testResult.ok}
           onClick={props.onFinish}
         >
-          {props.saving ? <Loader2 className="size-4 animate-spin" /> : null}
+          {props.saving ? <Spinner className="size-4 animate-spin" /> : null}
           完成
         </Button>
       </div>

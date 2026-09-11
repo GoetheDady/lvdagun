@@ -1,7 +1,8 @@
-import { Bot, CircleAlert, CircleCheck, Loader2 } from 'lucide-react';
+import { Bot, CircleAlert, CircleCheck } from 'lucide-react';
 
 import type { SubagentDelegation } from '@lvdagun/protocol';
 
+import { Spinner } from '@/components/ui/spinner';
 import { MarkdownText } from './markdown-text';
 
 const AGENT_LABELS: Record<SubagentDelegation['agent'], string> = {
@@ -73,7 +74,7 @@ function SubagentCard({ delegation }: { delegation: SubagentDelegation }): React
           {STATUS_LABELS[delegation.status]}
         </span>
         {running ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-soy" />
+          <Spinner className="size-3.5 shrink-0 animate-spin text-soy" />
         ) : failed || interrupted ? (
           <CircleAlert className="size-3.5 shrink-0" />
         ) : (

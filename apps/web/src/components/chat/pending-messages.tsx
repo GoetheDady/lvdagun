@@ -3,6 +3,7 @@ import { CornerDownRight, RotateCcw, Trash2 } from 'lucide-react';
 import type { PendingMessage } from '@lvdagun/protocol';
 
 import { Button } from '@/components/ui/button';
+import { IconTooltip } from '@/components/common/icon-tooltip';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -86,18 +87,19 @@ export function PendingMessages({
               <CornerDownRight />
               调整方向
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 text-muted-foreground"
-              title="删除待处理消息"
-              aria-label={`删除待处理消息：${message.text}`}
-              disabled={disabled}
-              onClick={() => onRemove(message.id)}
-            >
-              <Trash2 />
-            </Button>
+            <IconTooltip label="删除待处理消息">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground"
+                aria-label={`删除待处理消息：${message.text}`}
+                disabled={disabled}
+                onClick={() => onRemove(message.id)}
+              >
+                <Trash2 />
+              </Button>
+            </IconTooltip>
           </div>
         ))}
       </div>

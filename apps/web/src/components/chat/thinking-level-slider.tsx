@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+
 
 import type { ThinkingLevel } from '@lvdagun/protocol';
 
 import { Slider } from '@/components/ui/slider';
+import { Spinner } from '@/components/ui/spinner';
 
 /** Pi 思考等级的中文标签。 */
 const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
@@ -96,7 +97,7 @@ export function ThinkingLevelSlider(props: ThinkingLevelSliderProps): React.JSX.
         }}
       />
       <span className="flex size-3 items-center justify-center" aria-hidden="true">
-        {props.loading ? <Loader2 className="size-3 animate-spin" /> : null}
+        {props.loading ? <Spinner className="size-3 animate-spin" /> : null}
       </span>
     </div>
   );

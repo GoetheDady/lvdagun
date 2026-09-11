@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { CircleAlert, Loader2, Menu, Send } from 'lucide-react';
+import { CircleAlert, Menu, Send } from 'lucide-react';
 
 import type { AvailableModel } from '@lvdagun/protocol';
 
+import { GreetingSuggestions } from '@/components/chat/greeting-suggestions';
 import { ModelSelector } from '@/components/chat/model-selector';
+import { IconTooltip } from '@/components/common/icon-tooltip';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import {
   COMPOSER_BUTTON_CLASS,
   COMPOSER_GROUP_CLASS,
   COMPOSER_TEXTAREA_CLASS,
   COMPOSER_TOOL_ROW_CLASS,
-  SUGGESTIONS,
 } from '@/components/chat/composer-constants';
 import { useChatShellContext } from '@/hooks/use-chat-shell-context';
 import { api } from '@/services/api-client';
@@ -140,24 +142,7 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
               submitted === null ? 'opacity-100' : 'pointer-events-none opacity-0'
             }`}
           >
-            <div className="space-y-3">
-              <h3 className="font-display text-4xl font-bold tracking-wide">有什么事，吩咐吧。</h3>
-              <p className="text-sm text-muted-foreground">
-                驴打滚在本机待命，对话不会离开这台电脑
-              </p>
-            </div>
-            <div className="flex max-w-xl flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  className="rounded-full border border-border bg-card px-4 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-                  onClick={() => setInput(suggestion)}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
+            <GreetingSuggestions onPick={setInput} />
           </div>
 
           {error ? (
@@ -207,17 +192,18 @@ function DraftWorkspace({ onOpenSidebar }: { onOpenSidebar?: () => void }): Reac
                 />
               ) : null}
             </div>
-            <Button
-              size="icon"
-              className={COMPOSER_BUTTON_CLASS}
-              disabled={!input.trim() || creating}
-              title="发送"
-              aria-label="发送"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={handleSend}
-            >
-              {creating ? <Loader2 className="animate-spin" /> : <Send />}
-            </Button>
+            <IconTooltip label="发送">
+              <Button
+                size="icon"
+                className={COMPOSER_BUTTON_CLASS}
+                disabled={!input.trim() || creating}
+                aria-label="发送"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={handleSend}
+              >
+                {creating ? <Spinner /> : <Send />}
+              </Button>
+            </IconTooltip>
           </div>
         </div>
       </div>
